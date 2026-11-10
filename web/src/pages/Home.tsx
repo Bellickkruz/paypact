@@ -10,7 +10,7 @@ export function Home() {
   return (
     <main className="wrap wide">
       <section className="hero">
-        <h1>Get paid safely.<br />From anyone. On any crypto.</h1>
+        <h1>Get paid <span className="accent">safely.</span><br />From anyone. On any crypto.</h1>
         <p className="lead">
           Send your client a link. They pay with whatever crypto they already have, on any chain. The money is locked
           for you before you start, and released the moment they approve.
@@ -40,7 +40,7 @@ export function Home() {
       </section>
 
       <section className="grid2" style={{ marginTop: 16 }}>
-        <div className="card green">
+        <div className="card dark">
           <h3>For freelancers</h3>
           <ul className="muted">
             <li>Never start work on a promise again</li>

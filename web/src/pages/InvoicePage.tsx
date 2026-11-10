@@ -8,7 +8,7 @@ import { PAY_OPTIONS, looksLikeAddress, quotePayment, swapStatus, type Quote, ty
 import { callContract, ONE_YOCTO, useWallet } from "../lib/wallet";
 import { assistantCall, loadAssistantKey } from "../lib/assistant";
 import { downloadIcs, googleCalendarUrl, type CalendarEvent } from "../lib/calendar";
-import { Busy, CopyField, Qr, ShareButtons, Stars, StatusBadge, Timeline, errText, shortDate, toast, whatsappUrl, xUrl } from "../ui";
+import { Busy, CopyField, NudgeButtons, Qr, ShareButtons, Stars, StatusBadge, Timeline, errText, shortDate, toast } from "../ui";
 
 const DAY_MS = 86_400_000;
 const FINAL = ["Released", "Refunded", "Split", "Cancelled"];
@@ -482,7 +482,7 @@ function FreelancerPanel({ inv, url, refresh }: { inv: Invoice; url: string; ref
         <div className="card stack">
           <h3>Send it to your client</h3>
           <ShareButtons text={shareText} url={url} />
-          <a className="btn small ghost" href={whatsappUrl(`${nudge} ${url}`)} target="_blank" rel="noreferrer">💬 Send a friendly reminder (from PayPact)</a>
+          <NudgeButtons label="Send a friendly reminder, written as PayPact" text={nudge} url={url} />
           <button className="btn small danger" disabled={!!busy} onClick={() => run("cancel", () => wallet("cancel_invoice"), "Invoice cancelled")}>Cancel invoice</button>
         </div>
       )}
@@ -508,7 +508,7 @@ function FreelancerPanel({ inv, url, refresh }: { inv: Invoice; url: string; ref
             {ends && <>If they don't respond, you're <b>paid automatically on {shortDate(ends)}</b>. </>}No chasing needed.
           </p>
           {ends && <CalendarButtons event={{ title: `Auto-payment: ${inv.title}`, details: `If the client hasn't responded, release your payment. PayPact invoice #${inv.id}`, start: ends, url }} />}
-          <a className="btn small ghost" href={whatsappUrl(`${reviewNudge} ${url}`)} target="_blank" rel="noreferrer">💬 Nudge the client politely (from PayPact)</a>
+          <NudgeButtons label="Nudge the client politely, written as PayPact" text={reviewNudge} url={url} />
           {ends && Date.now() >= ends.getTime() && (
             <button className="btn" disabled={!!busy} onClick={() => run("release", () => relay({ method: "release_after_review", invoice_id: inv.id }), "Released. Enjoy your money!")}>
               <Busy busy={busy === "release"}>Release my payment now</Busy>
@@ -541,10 +541,7 @@ function FreelancerPanel({ inv, url, refresh }: { inv: Invoice; url: string; ref
           <div className="celebrate">🎉</div>
           <h3>You've been paid</h3>
           {inv.rating && <p>Your client rated you <Stars value={inv.rating.stars} />{inv.rating.comment && <><br /><i>"{inv.rating.comment}"</i></>}</p>}
-          <div className="row">
-            <a className="btn grow" href={xUrl(`${brag} ${url}`)} target="_blank" rel="noreferrer">Share on X</a>
-            <a className="btn whatsapp grow" href={whatsappUrl(`${brag} ${url}`)} target="_blank" rel="noreferrer">Share on WhatsApp</a>
-          </div>
+          <ShareButtons text={brag} url={url} />
           <a className="btn ghost" href={`#/p/${inv.freelancer}`}>See my profile</a>
         </div>
       )}

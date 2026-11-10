@@ -8,25 +8,54 @@ export const go = (path: string) => {
   location.hash = path;
 };
 
+type Theme = "light" | "dark";
+
+function currentTheme(): Theme {
+  const set = document.documentElement.getAttribute("data-theme");
+  if (set === "light" || set === "dark") return set;
+  return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function ThemeToggle() {
+  const [theme, setTheme] = useState<Theme>(currentTheme);
+  const flip = () => {
+    const next: Theme = theme === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try {
+      localStorage.setItem("paypact:theme", next);
+    } catch {
+      /* the choice just won't be remembered */
+    }
+    setTheme(next);
+  };
+  return (
+    <button className="theme-toggle" onClick={flip} aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} title={theme === "dark" ? "Light mode" : "Dark mode"}>
+      {theme === "dark" ? "☀️" : "🌙"}
+    </button>
+  );
+}
+
 export function Header() {
   const { accountId, connect, disconnect } = useWallet();
   return (
     <header className="header">
       <a className="logo" href="#/">
-        <img src="/favicon.svg" alt="" /> PayPact
+        <img src="/favicon.svg" alt="" />
+        <b>Pay<span>Pact</span></b>
       </a>
       <nav className="nav">
         {config.network === "testnet" && <span className="net">testnet</span>}
+        <ThemeToggle />
         {accountId ? (
           <>
-            <a className="btn small ghost" href="#/me">My invoices</a>
+            <a className="btn small ghost" href="#/me">Invoices</a>
             <button className="btn small ghost" onClick={disconnect} title={accountId}>
               Sign out
             </button>
           </>
         ) : (
-          <button className="btn small" onClick={connect}>
-            Freelancer sign in
+          <button className="btn small" onClick={connect} title="Freelancer sign in">
+            Sign in
           </button>
         )}
       </nav>
@@ -88,7 +117,7 @@ export function Stars({ value, count }: { value: number; count?: number }) {
 export function Qr({ text }: { text: string }) {
   const [src, setSrc] = useState("");
   useEffect(() => {
-    QRCode.toDataURL(text, { margin: 1, width: 360, color: { dark: "#0f3d2e" } }).then(setSrc);
+    QRCode.toDataURL(text, { margin: 1, width: 360, color: { dark: "#111111", light: "#ffffff" } }).then(setSrc);
   }, [text]);
   return <div className="qr">{src && <img src={src} alt="QR code" />}</div>;
 }
@@ -125,24 +154,36 @@ export function CopyField({ value, label }: { value: string; label?: string }) {
 }
 
 export const whatsappUrl = (text: string) => `https://wa.me/?text=${encodeURIComponent(text)}`;
-export const xUrl = (text: string) => `https://x.com/intent/post?text=${encodeURIComponent(text)}`;
+export const telegramUrl = (text: string, url: string) =>
+  `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`;
+export const xUrl = (text: string, url?: string) =>
+  `https://x.com/intent/post?text=${encodeURIComponent(text)}${url ? `&url=${encodeURIComponent(url)}` : ""}`;
 
-export function ShareButtons({ text, url }: { text: string; url: string }) {
-  const full = `${text} ${url}`;
-  const canShare = typeof navigator !== "undefined" && "share" in navigator;
+/** WhatsApp, Telegram and X, plus copy link. */
+export function ShareButtons({ text, url, xText }: { text: string; url: string; xText?: string }) {
   return (
-    <div className="row">
-      <a className="btn whatsapp grow" href={whatsappUrl(full)} target="_blank" rel="noreferrer">
-        Send on WhatsApp
-      </a>
-      {canShare && (
-        <button className="btn ghost grow" onClick={() => navigator.share({ text, url }).catch(() => {})}>
-          Share…
-        </button>
-      )}
-      <button className="btn ghost grow" onClick={() => navigator.clipboard.writeText(url).then(() => toast("Link copied"))}>
+    <div className="stack">
+      <div className="row">
+        <a className="btn whatsapp grow" href={whatsappUrl(`${text} ${url}`)} target="_blank" rel="noreferrer">WhatsApp</a>
+        <a className="btn telegram grow" href={telegramUrl(text, url)} target="_blank" rel="noreferrer">Telegram</a>
+        <a className="btn x grow" href={xUrl(xText ?? text, url)} target="_blank" rel="noreferrer">𝕏 Post</a>
+      </div>
+      <button className="btn ghost block" onClick={() => navigator.clipboard.writeText(url).then(() => toast("Link copied"))}>
         Copy link
       </button>
+    </div>
+  );
+}
+
+/** A polite reminder written as PayPact, sent by WhatsApp or Telegram. */
+export function NudgeButtons({ label, text, url }: { label: string; text: string; url: string }) {
+  return (
+    <div>
+      <p className="small muted" style={{ marginBottom: 6 }}>💬 {label}</p>
+      <div className="row">
+        <a className="btn small whatsapp grow" href={whatsappUrl(`${text} ${url}`)} target="_blank" rel="noreferrer">WhatsApp</a>
+        <a className="btn small telegram grow" href={telegramUrl(text, url)} target="_blank" rel="noreferrer">Telegram</a>
+      </div>
     </div>
   );
 }
