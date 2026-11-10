@@ -1,0 +1,560 @@
+import { useCallback, useEffect, useState } from "react";
+import { config } from "../lib/config";
+import { formatUsd, nsToDate } from "../lib/money";
+import { getInvoice, getProfile, heldAmount, type ClientAction, type Invoice, type Profile } from "../lib/near";
+import { loadClientSecret, newClientSecret, paymentMsg, privateLink, publicKeyOf, saveClientSecret } from "../lib/clientKey";
+import { relay, sendClientAction } from "../lib/relay";
+import { PAY_OPTIONS, looksLikeAddress, quotePayment, swapStatus, type Quote, type SwapStatus } from "../lib/intents";
+import { callContract, ONE_YOCTO, useWallet } from "../lib/wallet";
+import { assistantCall, loadAssistantKey } from "../lib/assistant";
+import { downloadIcs, googleCalendarUrl, type CalendarEvent } from "../lib/calendar";
+import { Busy, CopyField, Qr, ShareButtons, Stars, StatusBadge, Timeline, errText, shortDate, toast, whatsappUrl, xUrl } from "../ui";
+
+const DAY_MS = 86_400_000;
+const FINAL = ["Released", "Refunded", "Split", "Cancelled"];
+
+export function InvoicePage({ id }: { id: string }) {
+  const { accountId, connect } = useWallet();
+  const [inv, setInv] = useState<Invoice | null | undefined>(undefined);
+  const [profile, setProfile] = useState<[Profile, number] | null>(null);
+  const [secret, setSecret] = useState<string | null>(() => loadClientSecret(id));
+
+  const refresh = useCallback(async () => {
+    try {
+      setInv(await getInvoice(id));
+    } catch {
+      /* keep the last state on a network blip */
+    }
+  }, [id]);
+
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 5000);
+    return () => clearInterval(t);
+  }, [refresh]);
+
+  useEffect(() => {
+    if (inv?.freelancer) getProfile(inv.freelancer).then(setProfile).catch(() => {});
+  }, [inv?.freelancer, inv?.status]);
+
+  if (inv === undefined) return <main className="wrap"><div className="card center"><span className="spinner dark" /></div></main>;
+  if (inv === null) return <main className="wrap"><div className="card center"><h2>Invoice not found</h2><p className="muted">Check the link and try again.</p></div></main>;
+
+  const isFreelancer = accountId === inv.freelancer;
+  const isClient = !!secret && !!inv.client_key && publicKeyOf(secret) === inv.client_key;
+  const url = `${location.origin}${location.pathname}#/i/${id}`;
+
+  return (
+    <main className="wrap">
+      <InvoiceSummary inv={inv} profile={profile} />
+      {isFreelancer && <FreelancerPanel inv={inv} url={url} refresh={refresh} />}
+      {!isFreelancer && inv.status === "AwaitingPayment" && (
+        <PayPanel inv={inv} secret={secret} onSecret={setSecret} refresh={refresh} />
+      )}
+      {!isFreelancer && isClient && <ClientPanel inv={inv} secret={secret!} refresh={refresh} />}
+      {!isFreelancer && !isClient && inv.status !== "AwaitingPayment" && (
+        <div className="card soft center muted small">
+          Paid this invoice on another device? Open the private link you saved when you paid.
+          {!accountId && (
+            <>
+              {" "}Are you the freelancer? <a href="#" onClick={(e) => { e.preventDefault(); connect(); }}>Sign in</a>.
+            </>
+          )}
+        </div>
+      )}
+    </main>
+  );
+}
+
+// ---------------------------------------------------------------- summary
+
+function InvoiceSummary({ inv, profile }: { inv: Invoice; profile: [Profile, number] | null }) {
+  const [p, avg] = profile ?? [null, 0];
+  return (
+    <div className="card">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <span className="muted small">Invoice #{inv.id}</span>
+        <StatusBadge status={inv.status} />
+      </div>
+      <div className="amount">{formatUsd(inv.amount, { cents: true })}</div>
+      <h3>{inv.title}</h3>
+      <p className="muted small" style={{ marginBottom: 6 }}>
+        From <a href={`#/p/${inv.freelancer}`}>{inv.freelancer}</a> · due {shortDate(nsToDate(inv.due_at))}
+        {BigInt(inv.upfront) > 0n && ` · ${formatUsd(inv.upfront, { cents: true })} up front`}
+      </p>
+      {p && (
+        <a href={`#/p/${inv.freelancer}`} className="small" style={{ textDecoration: "none" }}>
+          <Stars value={avg / 100} count={p.rating_count} />{" "}
+          <span className="muted">· {p.completed} {p.completed === 1 ? "job" : "jobs"} completed
+            {p.delivered > 0 && ` · ${Math.round((p.delivered_on_time / p.delivered) * 100)}% on time`}</span>
+        </a>
+      )}
+      <Timeline inv={inv} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- client: paying
+
+function ProtectionNote({ inv }: { inv: Invoice }) {
+  const grace = 2;
+  const refundBy = shortDate(new Date(nsToDate(inv.due_at).getTime() + grace * DAY_MS));
+  const up = BigInt(inv.upfront);
+  return (
+    <div className="protect">
+      <span className="icon">🔒</span>
+      <div>
+        {up === BigInt(inv.amount) ? (
+          <>This is a <b>direct payment</b>: it goes straight to {inv.freelancer}, as you agreed.</>
+        ) : (
+          <>
+            {up > 0n && <><b>{formatUsd(inv.upfront, { cents: true })}</b> goes to the freelancer right away, as agreed. </>}
+            <b>{formatUsd(heldAmount(inv), { cents: true })} is held safely</b> by a smart contract. It's released only when you
+            approve the work, and refunded to you if nothing is delivered by {refundBy}. Not even PayPact can touch it.
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PayPanel({ inv, secret, onSecret, refresh }: {
+  inv: Invoice; secret: string | null; onSecret: (s: string) => void; refresh: () => void;
+}) {
+  const ensureSecret = () => {
+    if (secret) return secret;
+    const s = newClientSecret();
+    saveClientSecret(inv.id, s);
+    onSecret(s);
+    return s;
+  };
+  return (
+    <div className="card stack">
+      <h2>Pay this invoice</h2>
+      <ProtectionNote inv={inv} />
+      {config.anyChain ? <AnyChainPay inv={inv} ensureSecret={ensureSecret} /> : <DemoPay inv={inv} ensureSecret={ensureSecret} refresh={refresh} />}
+      <NearWalletPay inv={inv} ensureSecret={ensureSecret} refresh={refresh} />
+    </div>
+  );
+}
+
+function DemoPay({ inv, ensureSecret, refresh }: { inv: Invoice; ensureSecret: () => string; refresh: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <div className="stack">
+      <p className="muted small">
+        This is the testnet demo, so you pay with free test dollars. On mainnet this button becomes
+        "pay with any crypto": USDC, USDT, ETH, SOL or BTC on any chain, swapped by NEAR Intents.
+      </p>
+      {error && <p className="err">{error}</p>}
+      <button
+        className="btn big block gold"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError("");
+          try {
+            const s = ensureSecret();
+            await relay({ method: "demo_pay", invoice_id: inv.id, client_key: publicKeyOf(s) });
+            toast("Paid. The money is locked for the freelancer.");
+            refresh();
+          } catch (e) {
+            setError(errText(e));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Busy busy={busy}>Pay {formatUsd(inv.amount, { cents: true })} (test money)</Busy>
+      </button>
+    </div>
+  );
+}
+
+function AnyChainPay({ inv, ensureSecret }: { inv: Invoice; ensureSecret: () => string }) {
+  const [opt, setOpt] = useState(0);
+  const [refundTo, setRefundTo] = useState("");
+  const [quote, setQuote] = useState<Quote | null>(null);
+  const [status, setStatus] = useState<SwapStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const choice = PAY_OPTIONS[opt];
+
+  useEffect(() => {
+    if (!quote) return;
+    const t = setInterval(async () => setStatus(await swapStatus(quote.depositAddress, quote.depositMemo).catch(() => null)), 6000);
+    return () => clearInterval(t);
+  }, [quote]);
+
+  const getQuote = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const s = ensureSecret();
+      setQuote(await quotePayment({ originAsset: choice.assetId, amountOut: inv.amount, refundTo: refundTo.trim(), msg: paymentMsg(inv.id, s) }));
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (quote) {
+    const label = status === "SUCCESS" ? "✅ Received. Locking it for the freelancer…" :
+      status === "PROCESSING" || status === "KNOWN_DEPOSIT_TX" ? "⏳ Payment seen, converting…" :
+      status === "REFUNDED" || status === "FAILED" ? "↩️ Something went wrong; your payment is being refunded to your address." :
+      status === "INCOMPLETE_DEPOSIT" ? "⚠️ The amount sent was too small; it will be refunded." : "Waiting for your payment…";
+    return (
+      <div className="stack">
+        <div className="card gold" style={{ margin: 0 }}>
+          <p style={{ marginBottom: 4 }}>Send exactly</p>
+          <div className="amount" style={{ fontSize: 30 }}>{quote.amountInFormatted} {choice.label}</div>
+          <p className="muted small">on <b>{choice.chain}</b>, to this address. It arrives in about {quote.timeEstimate ?? 60} seconds.</p>
+        </div>
+        <div className="center"><Qr text={quote.depositAddress} /></div>
+        <CopyField label={`${choice.label} deposit address (${choice.chain})`} value={quote.depositAddress} />
+        {quote.depositMemo && <CopyField label="Memo (required)" value={quote.depositMemo} />}
+        <p className="center"><b>{label}</b></p>
+        <p className="hint center">This page updates by itself. Only send {choice.label} on {choice.chain}; anything else can be lost.</p>
+        <button className="btn ghost small" onClick={() => { setQuote(null); setStatus(null); }}>Choose another coin</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="stack">
+      <div className="field">
+        <label>Pay with the crypto you already have</label>
+        <div className="chips">
+          {PAY_OPTIONS.map((o, i) => (
+            <button key={o.assetId} className={`chip ${i === opt ? "on" : ""}`} onClick={() => setOpt(i)}>
+              {o.label} · {o.chain}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="field">
+        <label htmlFor="refund">Your {choice.chain} address</label>
+        <input id="refund" placeholder={choice.addressHint} value={refundTo} onChange={(e) => setRefundTo(e.target.value)} />
+        <div className="hint">Only used to send your money back automatically if the conversion fails.</div>
+      </div>
+      {error && <p className="err">{error}</p>}
+      <button className="btn big block gold" disabled={busy || !looksLikeAddress(choice.chain, refundTo)} onClick={getQuote}>
+        <Busy busy={busy}>Get payment details</Busy>
+      </button>
+      <p className="hint center">The exact amount, including network fees, is shown before you send anything.</p>
+    </div>
+  );
+}
+
+function NearWalletPay({ inv, ensureSecret, refresh }: { inv: Invoice; ensureSecret: () => string; refresh: () => void }) {
+  const { accountId, connect } = useWallet();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <details>
+      <summary>Have {config.symbol} on NEAR? Pay from your NEAR wallet</summary>
+      <div className="stack" style={{ marginTop: 10 }}>
+        {error && <p className="err">{error}</p>}
+        {accountId ? (
+          <button
+            className="btn ghost block"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError("");
+              try {
+                const s = ensureSecret();
+                await callContract(
+                  "ft_transfer_call",
+                  { receiver_id: config.contract, amount: inv.amount, msg: paymentMsg(inv.id, s, accountId) },
+                  { receiverId: config.token, deposit: ONE_YOCTO, gas: 150_000_000_000_000n },
+                );
+                toast("Paid. The money is locked for the freelancer.");
+                refresh();
+              } catch (e) {
+                setError(errText(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <Busy busy={busy}>Pay {formatUsd(inv.amount, { cents: true })} from {accountId}</Busy>
+          </button>
+        ) : (
+          <button className="btn ghost block" onClick={() => connect()}>Connect a NEAR wallet</button>
+        )}
+      </div>
+    </details>
+  );
+}
+
+// ---------------------------------------------------------------- client: after paying
+
+function reviewEnds(inv: Invoice) {
+  return inv.delivered_at ? new Date(nsToDate(inv.delivered_at).getTime() + inv.review_days * DAY_MS) : null;
+}
+
+function CalendarButtons({ event }: { event: CalendarEvent }) {
+  return (
+    <div className="row">
+      <button className="btn small ghost" onClick={() => downloadIcs(event)}>📅 Add to my calendar</button>
+      <a className="btn small ghost" href={googleCalendarUrl(event)} target="_blank" rel="noreferrer">Google Calendar</a>
+    </div>
+  );
+}
+
+function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; refresh: () => void }) {
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [reason, setReason] = useState("");
+  const [splitPct, setSplitPct] = useState(50);
+  const [stars, setStars] = useState(5);
+  const [comment, setComment] = useState("");
+  const [refundAcct, setRefundAcct] = useState("");
+  const url = `${location.origin}${location.pathname}#/i/${inv.id}`;
+  const held = BigInt(heldAmount(inv));
+  const ends = reviewEnds(inv);
+
+  const act = async (label: string, action: ClientAction, done: string) => {
+    setBusy(label);
+    setError("");
+    try {
+      await sendClientAction(inv.id, secret, action);
+      toast(done);
+      refresh();
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <>
+      {inv.status === "Funded" && (
+        <div className="card stack">
+          <h3>Thanks, you've paid 🔒</h3>
+          <p className="muted">
+            {formatUsd(held, { cents: true })} is held safely. {inv.freelancer} has been told the money is there and is working on it.
+            Work is due {shortDate(nsToDate(inv.due_at))}.
+          </p>
+          <CalendarButtons event={{ title: `Work due: ${inv.title}`, details: `PayPact invoice #${inv.id}`, start: nsToDate(inv.due_at), url }} />
+          <button className="btn ghost" disabled={!!busy} onClick={() => act("approve", { type: "approve" }, "Approved and paid. Thank you!")}>
+            <Busy busy={busy === "approve"}>Already happy with the work? Approve now</Busy>
+          </button>
+          {Date.now() > nsToDate(inv.due_at).getTime() + 2 * DAY_MS && (
+            <button className="btn danger" disabled={!!busy} onClick={() => act("refund", { type: "refund_undelivered" }, "Refund on its way")}>
+              Nothing delivered: refund me
+            </button>
+          )}
+        </div>
+      )}
+
+      {inv.status === "Delivered" && (
+        <div className="card stack">
+          <h3>📦 The work has been delivered</h3>
+          <p className="muted">
+            Please review it. If you're happy, approve and {inv.freelancer} is paid in seconds.
+            {ends && <> If there's no response by <b>{shortDate(ends)}</b>, payment is released automatically.</>}
+          </p>
+          {ends && <CalendarButtons event={{ title: `Review & approve: ${inv.title}`, details: `Approve or report a problem before the automatic release. PayPact invoice #${inv.id}`, start: ends, url }} />}
+          <button className="btn big block" disabled={!!busy} onClick={() => act("approve", { type: "approve" }, "Approved and paid. Thank you!")}>
+            <Busy busy={busy === "approve"}>Approve & release {formatUsd(held, { cents: true })}</Busy>
+          </button>
+          <details>
+            <summary>Something's wrong? Report a problem</summary>
+            <div className="stack" style={{ marginTop: 10 }}>
+              <textarea placeholder="What's missing or wrong?" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
+              <p className="hint">The money stays frozen while you and the freelancer sort it out. You can agree a split, or a referee decides.</p>
+              <button className="btn danger" disabled={!!busy || !reason.trim()} onClick={() => act("dispute", { type: "dispute", reason: reason.trim() }, "Problem reported. The money is frozen.")}>
+                <Busy busy={busy === "dispute"}>Freeze payment & report</Busy>
+              </button>
+            </div>
+          </details>
+        </div>
+      )}
+
+      {inv.status === "Disputed" && (
+        <div className="card red stack">
+          <h3>⚠️ Payment frozen</h3>
+          <p className="small">You reported: "{inv.dispute_reason}"</p>
+          {inv.proposal?.by === "Freelancer" && (
+            <div className="card" style={{ margin: 0 }}>
+              <p>{inv.freelancer} offers: <b>{formatUsd(inv.proposal.to_freelancer, { cents: true })}</b> to them, <b>{formatUsd(held - BigInt(inv.proposal.to_freelancer), { cents: true })}</b> back to you.</p>
+              <button className="btn" disabled={!!busy} onClick={() => act("accept", { type: "accept_split" }, "Settled. Thanks for working it out.")}>
+                <Busy busy={busy === "accept"}>Accept this split</Busy>
+              </button>
+            </div>
+          )}
+          <label>Offer a split: {splitPct}% to the freelancer ({formatUsd((held * BigInt(splitPct)) / 100n, { cents: true })})</label>
+          <input type="range" min={0} max={100} step={5} value={splitPct} onChange={(e) => setSplitPct(Number(e.target.value))} />
+          <button className="btn ghost" disabled={!!busy} onClick={() => act("propose", { type: "propose_split", to_freelancer: ((held * BigInt(splitPct)) / 100n).toString() }, "Offer sent")}>
+            <Busy busy={busy === "propose"}>Send this offer</Busy>
+          </button>
+          <p className="hint">
+            {inv.arbiter ? `If you can't agree, the referee (${inv.arbiter}) decides.` : `If nothing is agreed within ${inv.dispute_timeout_days} days, it's split 50/50.`}
+          </p>
+        </div>
+      )}
+
+      {(inv.status === "Released" || inv.status === "Split") && !inv.rating && (
+        <div className="card stack">
+          <h3>How was working with {inv.freelancer}?</h3>
+          <div className="starpick">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button key={n} className={n <= stars ? "on" : ""} onClick={() => setStars(n)} aria-label={`${n} stars`}>★</button>
+            ))}
+          </div>
+          <textarea placeholder="A few words for future clients (optional)" maxLength={280} value={comment} onChange={(e) => setComment(e.target.value)} />
+          <button className="btn" disabled={!!busy} onClick={() => act("rate", { type: "rate", stars, comment: comment.trim() || null }, "Thanks! Your rating is on their profile.")}>
+            <Busy busy={busy === "rate"}>Post rating</Busy>
+          </button>
+          <p className="hint">Only clients who actually paid can rate, once. Ratings can't be edited or deleted by anyone.</p>
+        </div>
+      )}
+      {(inv.status === "Released" || inv.status === "Split") && inv.rating && (
+        <div className="card green center">Thanks for paying with PayPact. You rated {inv.freelancer} <Stars value={inv.rating.stars} />.</div>
+      )}
+
+      {!FINAL.includes(inv.status) && !inv.client_refund_to && (
+        <details className="card soft">
+          <summary>Add a NEAR account for refunds (recommended)</summary>
+          <div className="row" style={{ marginTop: 10 }}>
+            <input className="grow" placeholder="you.near" value={refundAcct} onChange={(e) => setRefundAcct(e.target.value.toLowerCase())} />
+            <button className="btn small" disabled={!!busy || !refundAcct.trim()} onClick={() => act("refundacct", { type: "set_refund_account", account: refundAcct.trim() }, "Saved")}>Save</button>
+          </div>
+          <p className="hint">If any money comes back to you, it goes here.</p>
+        </details>
+      )}
+
+      <details className="card soft">
+        <summary>🔑 Save your private link</summary>
+        <p className="small muted" style={{ marginTop: 8 }}>
+          This link lets you approve, report a problem or rate from any device. Keep it private: whoever has it can act for you on this invoice.
+        </p>
+        <CopyField value={privateLink(inv.id, secret)} />
+      </details>
+      {error && <p className="err">{error}</p>}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------- freelancer
+
+function FreelancerPanel({ inv, url, refresh }: { inv: Invoice; url: string; refresh: () => void }) {
+  const { accountId } = useWallet();
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [splitPct, setSplitPct] = useState(70);
+  const held = BigInt(heldAmount(inv));
+  const ends = reviewEnds(inv);
+
+  const run = async (label: string, fn: () => Promise<unknown>, done: string) => {
+    setBusy(label);
+    setError("");
+    try {
+      await fn();
+      toast(done);
+      refresh();
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy("");
+    }
+  };
+  const wallet = (method: string, args: object = {}, deposit = ONE_YOCTO) =>
+    callContract(method, { invoice_id: inv.id, ...args }, { deposit });
+  const markDelivered = () =>
+    accountId && loadAssistantKey(accountId)
+      ? assistantCall(accountId, "mark_delivered", { invoice_id: inv.id })
+      : callContract("mark_delivered", { invoice_id: inv.id }, { gas: 30_000_000_000_000n });
+
+  const shareText = `Hi, here's my invoice for ${inv.title}: ${formatUsd(inv.amount, { cents: true })}. You can pay with any crypto you have, and your payment is held safely until you approve the work:`;
+  const nudge = `Hi! A friendly reminder from PayPact: the invoice for "${inv.title}" (${formatUsd(inv.amount, { cents: true })}) is ready whenever you are. Your payment stays protected until you approve the work.`;
+  const reviewNudge = `Hi! Quick note from PayPact: the work for "${inv.title}" has been delivered. You can approve it here, or report a problem${ends ? ` before ${shortDate(ends)}` : ""}:`;
+  const brag = `Just got paid ${formatUsd(inv.amount, { cents: true })} for "${inv.title}" with PayPact on @NEARProtocol: client paid with crypto, escrow held it, paid out in seconds. ✅`;
+
+  return (
+    <div className="stack">
+      {inv.status === "AwaitingPayment" && (
+        <div className="card stack">
+          <h3>Send it to your client</h3>
+          <ShareButtons text={shareText} url={url} />
+          <a className="btn small ghost" href={whatsappUrl(`${nudge} ${url}`)} target="_blank" rel="noreferrer">💬 Send a friendly reminder (from PayPact)</a>
+          <button className="btn small danger" disabled={!!busy} onClick={() => run("cancel", () => wallet("cancel_invoice"), "Invoice cancelled")}>Cancel invoice</button>
+        </div>
+      )}
+
+      {inv.status === "Funded" && (
+        <div className="card green stack">
+          <h3>🔒 {formatUsd(held, { cents: true })} is locked for you</h3>
+          <p>
+            {BigInt(inv.upfront) > 0n && <>{formatUsd(inv.upfront, { cents: true })} up front is already in your wallet. </>}
+            The client can't pull this money back while you work. Deliver by <b>{shortDate(nsToDate(inv.due_at))}</b>, then mark it delivered.
+          </p>
+          <CalendarButtons event={{ title: `Deliver: ${inv.title}`, details: `PayPact invoice #${inv.id}: mark it delivered when done.`, start: nsToDate(inv.due_at), url }} />
+          <button className="btn big block" disabled={!!busy} onClick={() => run("deliver", markDelivered, "Marked delivered. The client has been asked to review.")}>
+            <Busy busy={busy === "deliver"}>I've delivered the work</Busy>
+          </button>
+        </div>
+      )}
+
+      {inv.status === "Delivered" && (
+        <div className="card stack">
+          <h3>Waiting for the client's review</h3>
+          <p className="muted">
+            {ends && <>If they don't respond, you're <b>paid automatically on {shortDate(ends)}</b>. </>}No chasing needed.
+          </p>
+          {ends && <CalendarButtons event={{ title: `Auto-payment: ${inv.title}`, details: `If the client hasn't responded, release your payment. PayPact invoice #${inv.id}`, start: ends, url }} />}
+          <a className="btn small ghost" href={whatsappUrl(`${reviewNudge} ${url}`)} target="_blank" rel="noreferrer">💬 Nudge the client politely (from PayPact)</a>
+          {ends && Date.now() >= ends.getTime() && (
+            <button className="btn" disabled={!!busy} onClick={() => run("release", () => relay({ method: "release_after_review", invoice_id: inv.id }), "Released. Enjoy your money!")}>
+              <Busy busy={busy === "release"}>Release my payment now</Busy>
+            </button>
+          )}
+        </div>
+      )}
+
+      {inv.status === "Disputed" && (
+        <div className="card red stack">
+          <h3>⚠️ The client reported a problem</h3>
+          <p className="small">"{inv.dispute_reason}"</p>
+          {inv.proposal?.by === "Client" && (
+            <div className="card" style={{ margin: 0 }}>
+              <p>Client offers: <b>{formatUsd(inv.proposal.to_freelancer, { cents: true })}</b> to you.</p>
+              <button className="btn" disabled={!!busy} onClick={() => run("accept", () => wallet("accept_split"), "Settled")}>Accept</button>
+            </div>
+          )}
+          <label>Offer a split: {splitPct}% to you ({formatUsd((held * BigInt(splitPct)) / 100n, { cents: true })})</label>
+          <input type="range" min={0} max={100} step={5} value={splitPct} onChange={(e) => setSplitPct(Number(e.target.value))} />
+          <div className="row">
+            <button className="btn ghost" disabled={!!busy} onClick={() => run("propose", () => wallet("propose_split", { to_freelancer: ((held * BigInt(splitPct)) / 100n).toString() }), "Offer sent")}>Send offer</button>
+            <button className="btn danger" disabled={!!busy} onClick={() => run("refund", () => wallet("refund_client"), "Refunded")}>Refund the client</button>
+          </div>
+        </div>
+      )}
+
+      {(inv.status === "Released" || inv.status === "Split") && (
+        <div className="card green stack center">
+          <div className="celebrate">🎉</div>
+          <h3>You've been paid</h3>
+          {inv.rating && <p>Your client rated you <Stars value={inv.rating.stars} />{inv.rating.comment && <><br /><i>"{inv.rating.comment}"</i></>}</p>}
+          <div className="row">
+            <a className="btn grow" href={xUrl(`${brag} ${url}`)} target="_blank" rel="noreferrer">Share on X</a>
+            <a className="btn whatsapp grow" href={whatsappUrl(`${brag} ${url}`)} target="_blank" rel="noreferrer">Share on WhatsApp</a>
+          </div>
+          <a className="btn ghost" href={`#/p/${inv.freelancer}`}>See my profile</a>
+        </div>
+      )}
+      {(BigInt(inv.owed_freelancer) > 0n) && (
+        <div className="card gold">
+          A payout to you couldn't be delivered (your account may need to register with the token).{" "}
+          <button className="btn small" onClick={() => run("retry", () => relay({ method: "retry_payout", invoice_id: inv.id }), "Sent")}>Retry</button>
+        </div>
+      )}
+      {error && <p className="err">{error}</p>}
+    </div>
+  );
+}
