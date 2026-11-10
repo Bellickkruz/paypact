@@ -50,24 +50,24 @@ const call = (account, contractId, methodName, args, deposit = 0n, gas = 100n * 
 
 // --- setup -----------------------------------------------------------------
 step(0, `Deploying test token and escrow under ${dev.account_id}`);
-const token = await subAccount(ids.token, 3n * NEAR);
+const token = await subAccount(ids.token, 2n * NEAR);
 await token.account.deployContract(readFileSync("../test-token/target/near/test_token.wasm"));
 await call(token.account, ids.token, "new", {});
 
-const escrow = await subAccount(ids.escrow, 4n * NEAR);
+const escrow = await subAccount(ids.escrow, 3n * NEAR);
 await escrow.account.deployContract(readFileSync("../contract/target/near/invoice_escrow.wasm"));
 await call(escrow.account, ids.escrow, "new", { owner: dev.account_id, allowed_tokens: [ids.token] });
 
-const tolu = await subAccount(ids.tolu, 2n * NEAR);
+const tolu = await subAccount(ids.tolu, 1n * NEAR);
 // Register the escrow and freelancer with the token, and give the "client" (dev) 10 tUSDC.
 for (const who of [ids.escrow, ids.tolu]) await call(devAccount, ids.token, "mint", { account_id: who, amount: "0" });
 await call(devAccount, ids.token, "mint", { account_id: dev.account_id, amount: "10000000" });
 console.log(`   token=${ids.token}\n   escrow=${ids.escrow}\n   freelancer=${ids.tolu}`);
 
 // --- 1. invoice ------------------------------------------------------------
-step(1, "Tolu creates a 5 tUSDC invoice");
+step(1, "Tolu creates a 5 tUSDC invoice with 40% paid up front");
 const invoiceId = await call(tolu.account, ids.escrow, "create_invoice", {
-  token: ids.token, amount: "5000000", title: "Logo design", due_in_days: 7, review_days: 5,
+  token: ids.token, amount: "5000000", title: "Logo design", due_in_days: 7, review_days: 5, upfront_percent: 40,
 });
 console.log(`   invoice #${invoiceId}`);
 
@@ -81,7 +81,9 @@ await call(devAccount, ids.token, "ft_transfer_call", {
   msg: JSON.stringify({ invoice_id: invoiceId, client_key: clientKey }),
 }, ONE_YOCTO);
 let inv = await view(ids.escrow, "get_invoice", { invoice_id: invoiceId });
-console.log(`   status=${inv.status}  escrow holds ${usdc(await balance(ids.escrow))}`);
+const upfrontReceived = await balance(ids.tolu);
+console.log(`   status=${inv.status}  Tolu got ${usdc(upfrontReceived)} up front  escrow holds ${usdc(await balance(ids.escrow))}`);
+if (upfrontReceived !== 2000000n) process.exitCode = 1;
 
 // --- 3. AI assistant key ---------------------------------------------------
 step(3, "Tolu gives her AI assistant a function-call key limited to create_invoice + mark_delivered");
@@ -124,6 +126,17 @@ await call(devAccount, ids.escrow, "client_action", { invoice_id: invoiceId, act
 step(6, "Result");
 inv = await view(ids.escrow, "get_invoice", { invoice_id: invoiceId });
 const after = await balance(ids.tolu);
-console.log(`   status=${inv.status}  Tolu received ${usdc(after - before)}  escrow now ${usdc(await balance(ids.escrow))}`);
-if (inv.status !== "Released" || after - before !== 5000000n) process.exitCode = 1;
+console.log(`   status=${inv.status}  Tolu received ${usdc(after - before)} on approval (${usdc(after)} in total)  escrow now ${usdc(await balance(ids.escrow))}`);
+if (inv.status !== "Released" || after - before !== 3000000n || after !== 5000000n) process.exitCode = 1;
+
+step(7, "Sarah rates Tolu; the profile updates");
+const rate = { type: "rate", stars: 5, comment: "Fast and great work" };
+const rateMsg = await view(ids.escrow, "action_message", { invoice_id: invoiceId, action: rate });
+await call(devAccount, ids.escrow, "client_action", {
+  invoice_id: invoiceId, action: rate,
+  signature: bs58.encode(ed25519.sign(new TextEncoder().encode(rateMsg), clientSecret)),
+}, 0n, 100n * TGAS);
+const [profile, avg] = await view(ids.escrow, "get_profile", { account_id: ids.tolu });
+console.log(`   jobs completed=${profile.completed}  on time=${profile.delivered_on_time}/${profile.delivered}  earned=${usdc(BigInt(profile.total_earned))}  rating=${avg / 100}★ (${profile.rating_count})`);
+if (profile.completed !== 1 || avg !== 500) process.exitCode = 1;
 console.log(process.exitCode ? "\nE2E FAILED" : "\nE2E PASSED");

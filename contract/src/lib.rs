@@ -11,6 +11,12 @@
 //! browser generates an ed25519 key and puts its public half in the payment
 //! `msg`. Client actions are messages signed with that key, relayed by anyone.
 //!
+//! An invoice can ask for part of the amount up front (`upfront`): that share is
+//! paid to the freelancer the moment the client pays, and only the rest is held.
+//!
+//! Each freelancer has an on-chain profile (jobs, earnings, on-time delivery,
+//! disputes) and ratings that only a client who actually paid can leave.
+//!
 //! Methods that move money or change who gets paid require exactly 1 yoctoNEAR.
 //! NEAR function-call access keys cannot attach a deposit, so an AI assistant
 //! holding such a key can create invoices and mark work delivered, but can never
@@ -18,7 +24,7 @@
 
 use near_sdk::json_types::{U128, U64};
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::store::IterableMap;
+use near_sdk::store::{IterableMap, LookupMap};
 use near_sdk::{
     assert_one_yocto, env, near, require, AccountId, Gas, NearToken, PanicOnDefault, Promise,
     PromiseError, PromiseOrValue,
@@ -72,6 +78,8 @@ pub struct Invoice {
     /// NEP-141 stablecoin the invoice is priced and settled in.
     pub token: AccountId,
     pub amount: U128,
+    /// Paid to the freelancer as soon as the client pays; the rest is held in escrow.
+    pub upfront: U128,
     pub title: String,
     pub created_at: U64,
     /// Work is due by this time (ns). Past due + grace, an undelivered invoice can be refunded.
@@ -94,6 +102,32 @@ pub struct Invoice {
     /// Funds still owed after a failed transfer, claimable with `retry_payout`.
     pub owed_freelancer: U128,
     pub owed_client: U128,
+    /// The client's rating of the freelancer, left once after settlement.
+    pub rating: Option<Rating>,
+}
+
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug)]
+pub struct Rating {
+    pub stars: u8,
+    pub comment: Option<String>,
+    pub at: U64,
+}
+
+/// Track record of a freelancer, built only from invoices paid through this contract.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, Default)]
+pub struct Profile {
+    pub invoices_paid: u32,
+    pub completed: u32,
+    pub split: u32,
+    pub refunded: u32,
+    pub disputed: u32,
+    pub delivered: u32,
+    pub delivered_on_time: u32,
+    pub total_earned: U128,
+    pub rating_sum: u32,
+    pub rating_count: u32,
 }
 
 /// The `msg` of the `ft_transfer_call` that pays an invoice.
@@ -119,12 +153,15 @@ pub enum ClientAction {
     RefundUndelivered,
     /// Set or change the NEAR account refunds are paid to.
     SetRefundAccount { account: AccountId },
+    /// Rate the freelancer (1-5 stars) once the invoice is settled.
+    Rate { stars: u8, comment: Option<String> },
 }
 
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct Contract {
     invoices: IterableMap<u64, Invoice>,
+    profiles: LookupMap<AccountId, Profile>,
     next_id: u64,
     /// Stablecoins invoices may be priced in.
     allowed_tokens: Vec<AccountId>,
@@ -139,6 +176,7 @@ impl Contract {
     pub fn new(owner: AccountId, allowed_tokens: Vec<AccountId>) -> Self {
         Self {
             invoices: IterableMap::new(b"i"),
+            profiles: LookupMap::new(b"p"),
             next_id: 1,
             allowed_tokens,
             owner,
@@ -160,6 +198,7 @@ impl Contract {
         review_days: Option<u32>,
         dispute_timeout_days: Option<u32>,
         arbiter: Option<AccountId>,
+        upfront_percent: Option<u8>,
     ) -> U64 {
         require!(self.allowed_tokens.contains(&token), "Token not supported");
         require!(amount.0 > 0, "Amount must be positive");
@@ -172,6 +211,9 @@ impl Contract {
             dispute_timeout_days >= 7 && dispute_timeout_days <= MAX_DAYS,
             "Dispute timeout must be 7-365 days"
         );
+        let upfront_percent = upfront_percent.unwrap_or(0);
+        require!(upfront_percent <= 100, "Upfront must be 0-100%");
+        let upfront = amount.0 * upfront_percent as u128 / 100;
         let freelancer = env::predecessor_account_id();
         if let Some(a) = &arbiter {
             require!(*a != freelancer, "Arbiter cannot be the freelancer");
@@ -186,6 +228,7 @@ impl Contract {
                 freelancer,
                 token,
                 amount,
+                upfront: U128(upfront),
                 title: title.trim().to_string(),
                 created_at: U64(now),
                 due_at: U64(now + due_in_days as u64 * NS_PER_DAY),
@@ -203,6 +246,7 @@ impl Contract {
                 client_nonce: 0,
                 owed_freelancer: U128(0),
                 owed_client: U128(0),
+                rating: None,
             },
         );
         env::log_str(&format!("invoice_created id={id}"));
@@ -215,8 +259,16 @@ impl Contract {
         let mut inv = self.get_mut(invoice_id);
         require!(env::predecessor_account_id() == inv.freelancer, "Only the freelancer");
         require!(inv.status == Status::Funded, "Invoice is not funded");
+        let now = env::block_timestamp();
         inv.status = Status::Delivered;
-        inv.delivered_at = Some(U64(env::block_timestamp()));
+        inv.delivered_at = Some(U64(now));
+        let on_time = now <= inv.due_at.0;
+        self.update_profile(&inv.freelancer, |p| {
+            p.delivered += 1;
+            if on_time {
+                p.delivered_on_time += 1;
+            }
+        });
         self.save(inv);
     }
 
@@ -241,7 +293,7 @@ impl Contract {
             matches!(inv.status, Status::Funded | Status::Delivered | Status::Disputed),
             "Nothing to refund"
         );
-        let amount = inv.amount.0;
+        let amount = Self::held(&inv);
         self.settle(&mut inv, 0, amount, Status::Refunded)
     }
 
@@ -252,7 +304,7 @@ impl Contract {
         let mut inv = self.get_mut(invoice_id);
         require!(env::predecessor_account_id() == inv.freelancer, "Only the freelancer");
         require!(inv.status == Status::Disputed, "Invoice is not disputed");
-        require!(to_freelancer.0 <= inv.amount.0, "Split exceeds the invoice amount");
+        require!(to_freelancer.0 <= Self::held(&inv), "Split exceeds the invoice amount");
         inv.proposal = Some(SplitProposal { by: Party::Freelancer, to_freelancer });
         self.save(inv);
     }
@@ -264,7 +316,7 @@ impl Contract {
         let mut inv = self.get_mut(invoice_id);
         require!(env::predecessor_account_id() == inv.freelancer, "Only the freelancer");
         let to_freelancer = Self::proposal_from(&inv, Party::Client);
-        let to_client = inv.amount.0 - to_freelancer;
+        let to_client = Self::held(&inv) - to_freelancer;
         self.settle(&mut inv, to_freelancer, to_client, Status::Split)
     }
 
@@ -291,7 +343,7 @@ impl Contract {
                     matches!(inv.status, Status::Funded | Status::Delivered),
                     "Invoice cannot be approved now"
                 );
-                let amount = inv.amount.0;
+                let amount = Self::held(&inv);
                 PromiseOrValue::Promise(self.settle(&mut inv, amount, 0, Status::Released))
             }
             ClientAction::Dispute { reason } => {
@@ -301,19 +353,20 @@ impl Contract {
                 inv.status = Status::Disputed;
                 inv.disputed_at = Some(U64(now));
                 inv.dispute_reason = Some(reason);
+                self.update_profile(&inv.freelancer, |p| p.disputed += 1);
                 self.save(inv);
                 PromiseOrValue::Value(())
             }
             ClientAction::ProposeSplit { to_freelancer } => {
                 require!(inv.status == Status::Disputed, "Invoice is not disputed");
-                require!(to_freelancer.0 <= inv.amount.0, "Split exceeds the invoice amount");
+                require!(to_freelancer.0 <= Self::held(&inv), "Split exceeds the invoice amount");
                 inv.proposal = Some(SplitProposal { by: Party::Client, to_freelancer });
                 self.save(inv);
                 PromiseOrValue::Value(())
             }
             ClientAction::AcceptSplit => {
                 let to_freelancer = Self::proposal_from(&inv, Party::Freelancer);
-                let to_client = inv.amount.0 - to_freelancer;
+                let to_client = Self::held(&inv) - to_freelancer;
                 PromiseOrValue::Promise(self.settle(&mut inv, to_freelancer, to_client, Status::Split))
             }
             ClientAction::RefundUndelivered => {
@@ -322,11 +375,29 @@ impl Contract {
                     now >= inv.due_at.0 + self.grace_days as u64 * NS_PER_DAY,
                     "Due date and grace period have not passed"
                 );
-                let amount = inv.amount.0;
+                let amount = Self::held(&inv);
                 PromiseOrValue::Promise(self.settle(&mut inv, 0, amount, Status::Refunded))
             }
             ClientAction::SetRefundAccount { account } => {
                 inv.client_refund_to = Some(account);
+                self.save(inv);
+                PromiseOrValue::Value(())
+            }
+            ClientAction::Rate { stars, comment } => {
+                require!(
+                    matches!(inv.status, Status::Released | Status::Split),
+                    "Only a settled invoice can be rated"
+                );
+                require!(inv.rating.is_none(), "Already rated");
+                require!((1..=5).contains(&stars), "Stars must be 1-5");
+                if let Some(c) = &comment {
+                    require!(c.len() <= 280, "Comment is too long");
+                }
+                inv.rating = Some(Rating { stars, comment, at: U64(now) });
+                self.update_profile(&inv.freelancer, |p| {
+                    p.rating_sum += stars as u32;
+                    p.rating_count += 1;
+                });
                 self.save(inv);
                 PromiseOrValue::Value(())
             }
@@ -340,7 +411,7 @@ impl Contract {
         let mut inv = self.get_mut(invoice_id);
         require!(inv.status == Status::Delivered, "Invoice is not awaiting review");
         require!(env::block_timestamp() >= Self::review_ends(&inv), "Review window is still open");
-        let amount = inv.amount.0;
+        let amount = Self::held(&inv);
         self.settle(&mut inv, amount, 0, Status::Released)
     }
 
@@ -354,8 +425,8 @@ impl Contract {
             "Only the invoice's arbiter"
         );
         require!(inv.status == Status::Disputed, "Invoice is not disputed");
-        require!(to_freelancer.0 <= inv.amount.0, "Split exceeds the invoice amount");
-        let to_client = inv.amount.0 - to_freelancer.0;
+        require!(to_freelancer.0 <= Self::held(&inv), "Split exceeds the invoice amount");
+        let to_client = Self::held(&inv) - to_freelancer.0;
         self.settle(&mut inv, to_freelancer.0, to_client, Status::Split)
     }
 
@@ -368,8 +439,8 @@ impl Contract {
             env::block_timestamp() >= disputed_at + inv.dispute_timeout_days as u64 * NS_PER_DAY,
             "Dispute timeout has not passed"
         );
-        let half = inv.amount.0 / 2;
-        let to_client = inv.amount.0 - half;
+        let half = Self::held(&inv) / 2;
+        let to_client = Self::held(&inv) - half;
         self.settle(&mut inv, half, to_client, Status::Split)
     }
 
@@ -423,7 +494,21 @@ impl Contract {
         // account the client names (here, or later with SetRefundAccount).
         let _ = sender_id;
         inv.client_refund_to = payment.refund_to;
-        env::log_str(&format!("invoice_funded id={}", inv.id.0));
+        env::log_str(&format!("invoice_funded id={} upfront={}", inv.id.0, inv.upfront.0));
+        let upfront = inv.upfront.0;
+        self.update_profile(&inv.freelancer, |p| {
+            p.invoices_paid += 1;
+            p.total_earned = U128(p.total_earned.0 + upfront);
+        });
+        if upfront == inv.amount.0 {
+            // Fully upfront: a direct payment, nothing is held.
+            inv.status = Status::Released;
+            self.update_profile(&inv.freelancer, |p| p.completed += 1);
+        }
+        if upfront > 0 {
+            // Detached: the payout runs after this call, with its own failure callback.
+            let _ = self.pay_out(&inv, upfront, 0);
+        }
         self.save(inv);
         PromiseOrValue::Value(U128(excess))
     }
@@ -451,6 +536,13 @@ impl Contract {
             .take(limit.unwrap_or(50).min(100) as usize)
             .cloned()
             .collect()
+    }
+
+    /// A freelancer's track record and average rating (x100, e.g. 480 = 4.8 stars).
+    pub fn get_profile(&self, account_id: AccountId) -> (Profile, u32) {
+        let p = self.profiles.get(&account_id).cloned().unwrap_or_default();
+        let avg = if p.rating_count == 0 { 0 } else { p.rating_sum * 100 / p.rating_count };
+        (p, avg)
     }
 
     pub fn get_allowed_tokens(&self) -> Vec<AccountId> {
@@ -496,6 +588,17 @@ impl Contract {
         self.invoices.insert(inv.id.0, inv);
     }
 
+    /// What escrow holds for the invoice: the amount minus any upfront share.
+    fn held(inv: &Invoice) -> u128 {
+        inv.amount.0 - inv.upfront.0
+    }
+
+    fn update_profile(&mut self, who: &AccountId, f: impl FnOnce(&mut Profile)) {
+        let mut p = self.profiles.get(who).cloned().unwrap_or_default();
+        f(&mut p);
+        self.profiles.insert(who.clone(), p);
+    }
+
     fn review_ends(inv: &Invoice) -> u64 {
         inv.delivered_at.map(|t| t.0).unwrap_or_default() + inv.review_days as u64 * NS_PER_DAY
     }
@@ -527,6 +630,15 @@ impl Contract {
         } else {
             to_client
         };
+        self.update_profile(&inv.freelancer, |p| {
+            p.total_earned = U128(p.total_earned.0 + to_freelancer);
+            match status {
+                Status::Released => p.completed += 1,
+                Status::Split => p.split += 1,
+                Status::Refunded => p.refunded += 1,
+                _ => {}
+            }
+        });
         let promise = self.pay_out(inv, to_freelancer, to_client);
         env::log_str(&format!(
             "invoice_settled id={} status={:?} to_freelancer={} to_client={}",

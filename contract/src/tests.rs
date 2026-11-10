@@ -41,7 +41,7 @@ fn setup() -> (Contract, u64) {
     set_ctx("owner.near", 0, 0);
     let mut c = Contract::new(acc("owner.near"), vec![acc(USDC)]);
     set_ctx("tolu.near", 0, 0);
-    let id = c.create_invoice(acc(USDC), U128(AMOUNT), "Logo design".into(), 7, None, None, Some(acc("judge.near")));
+    let id = c.create_invoice(acc(USDC), U128(AMOUNT), "Logo design".into(), 7, None, None, Some(acc("judge.near")), None);
     (c, id.0)
 }
 
@@ -239,7 +239,7 @@ fn ai_key_can_create_and_mark_delivered_without_deposit() {
     pay(&mut c, id, &Client::new(), AMOUNT, None);
     set_ctx("tolu.near", 0, 2 * DAY); // a function-call key sends no deposit
     c.mark_delivered(U64(id));
-    let id2 = c.create_invoice(acc(USDC), U128(5_000_000), "Banner".into(), 3, None, None, None);
+    let id2 = c.create_invoice(acc(USDC), U128(5_000_000), "Banner".into(), 3, None, None, None, None);
     assert_eq!(status(&c, id2.0), Status::AwaitingPayment);
 }
 
@@ -274,5 +274,107 @@ fn strangers_cannot_mark_delivered() {
 fn only_allowed_stablecoins() {
     let (mut c, _) = setup();
     set_ctx("tolu.near", 0, 0);
-    c.create_invoice(acc("meme.near"), U128(1), "x".into(), 3, None, None, None);
+    c.create_invoice(acc("meme.near"), U128(1), "x".into(), 3, None, None, None, None);
+}
+
+// --- upfront payment ---------------------------------------------------------
+
+fn setup_upfront(percent: u8) -> (Contract, u64) {
+    set_ctx("owner.near", 0, 0);
+    let mut c = Contract::new(acc("owner.near"), vec![acc(USDC)]);
+    set_ctx("tolu.near", 0, 0);
+    let id = c.create_invoice(acc(USDC), U128(AMOUNT), "Website".into(), 7, None, None, None, Some(percent));
+    (c, id.0)
+}
+
+#[test]
+fn half_upfront_pays_freelancer_at_funding_and_holds_the_rest() {
+    let (mut c, id) = setup_upfront(50);
+    let client = Client::new();
+    pay(&mut c, id, &client, AMOUNT, Some("sarah.near"));
+    let inv = c.get_invoice(U64(id)).unwrap();
+    assert_eq!(inv.status, Status::Funded);
+    assert_eq!(inv.upfront.0, AMOUNT / 2);
+    assert!(get_logs().iter().any(|l| l.contains("upfront=150000000")));
+    // A full refund now only returns the held half.
+    set_ctx("tolu.near", 1, 2 * DAY);
+    let _ = c.refund_client(U64(id));
+    assert!(get_logs().iter().any(|l| l.contains("to_freelancer=0 to_client=150000000")));
+}
+
+#[test]
+fn full_upfront_is_a_direct_payment() {
+    let (mut c, id) = setup_upfront(100);
+    pay(&mut c, id, &Client::new(), AMOUNT, None);
+    assert_eq!(status(&c, id), Status::Released);
+    let (profile, _) = c.get_profile(acc("tolu.near"));
+    assert_eq!(profile.completed, 1);
+    assert_eq!(profile.total_earned.0, AMOUNT);
+}
+
+#[test]
+#[should_panic(expected = "Upfront must be 0-100%")]
+fn upfront_over_100_rejected() {
+    setup_upfront(101);
+}
+
+// --- profile and ratings -----------------------------------------------------
+
+#[test]
+fn profile_tracks_jobs_on_time_delivery_and_rating() {
+    let (mut c, id) = setup();
+    let client = Client::new();
+    pay(&mut c, id, &client, AMOUNT, None);
+    set_ctx("tolu.near", 0, 2 * DAY); // due day 7: on time
+    c.mark_delivered(U64(id));
+    act(&mut c, id, &client, ClientAction::Approve, 3 * DAY);
+    act(&mut c, id, &client, ClientAction::Rate { stars: 5, comment: Some("Great logo!".into()) }, 3 * DAY);
+
+    let (p, avg) = c.get_profile(acc("tolu.near"));
+    assert_eq!((p.invoices_paid, p.completed, p.delivered, p.delivered_on_time), (1, 1, 1, 1));
+    assert_eq!(p.total_earned.0, AMOUNT);
+    assert_eq!((p.rating_count, avg), (1, 500));
+    assert_eq!(c.get_invoice(U64(id)).unwrap().rating.unwrap().stars, 5);
+}
+
+#[test]
+#[should_panic(expected = "Only a settled invoice can be rated")]
+fn cannot_rate_before_settlement() {
+    let (mut c, id) = setup();
+    let client = Client::new();
+    pay(&mut c, id, &client, AMOUNT, None);
+    act(&mut c, id, &client, ClientAction::Rate { stars: 5, comment: None }, 2 * DAY);
+}
+
+#[test]
+#[should_panic(expected = "Already rated")]
+fn can_rate_only_once() {
+    let (mut c, id) = setup();
+    let client = Client::new();
+    pay(&mut c, id, &client, AMOUNT, None);
+    act(&mut c, id, &client, ClientAction::Approve, 2 * DAY);
+    act(&mut c, id, &client, ClientAction::Rate { stars: 4, comment: None }, 2 * DAY);
+    act(&mut c, id, &client, ClientAction::Rate { stars: 5, comment: None }, 2 * DAY);
+}
+
+#[test]
+#[should_panic(expected = "Invalid client signature")]
+fn only_the_paying_client_can_rate() {
+    let (mut c, id) = setup();
+    let client = Client::new();
+    pay(&mut c, id, &client, AMOUNT, None);
+    act(&mut c, id, &client, ClientAction::Approve, 2 * DAY);
+    act(&mut c, id, &Client::new(), ClientAction::Rate { stars: 1, comment: None }, 2 * DAY);
+}
+
+#[test]
+fn late_delivery_and_disputes_show_in_profile() {
+    let (mut c, id) = setup();
+    let client = Client::new();
+    pay(&mut c, id, &client, AMOUNT, Some("sarah.near"));
+    set_ctx("tolu.near", 0, 8 * DAY); // due day 7: late
+    c.mark_delivered(U64(id));
+    act(&mut c, id, &client, ClientAction::Dispute { reason: "Late".into() }, 9 * DAY);
+    let (p, _) = c.get_profile(acc("tolu.near"));
+    assert_eq!((p.delivered, p.delivered_on_time, p.disputed), (1, 0, 1));
 }
