@@ -8,14 +8,14 @@ const defaults = {
     contract: "paypact.paypact-dev-mwaweex6.testnet",
     token: "tusdcwer0a.paypact-dev-mwaweex6.testnet",
     symbol: "tUSDC",
-    rpc: "https://rpc.testnet.near.org",
+    rpc: "https://rpc.testnet.fastnear.com",
     explorer: "https://testnet.nearblocks.io",
   },
   mainnet: {
     contract: "paypact.near",
     token: "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
     symbol: "USDC",
-    rpc: "https://rpc.mainnet.near.org",
+    rpc: "https://rpc.mainnet.fastnear.com",
     explorer: "https://nearblocks.io",
   },
 }[network];

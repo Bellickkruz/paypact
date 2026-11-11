@@ -324,8 +324,10 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
       await sendClientAction(inv.id, secret, action);
       toast(done);
       refresh();
+      setTimeout(refresh, 2500);
     } catch (e) {
       setError(errText(e));
+      toast(`Didn't go through: ${errText(e)}`);
     } finally {
       setBusy("");
     }
@@ -333,6 +335,7 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
 
   return (
     <>
+      {error && <div className="card red small"><b>Didn't go through:</b> {error}</div>}
       {inv.status === "Funded" && (
         <div className="card stack">
           <h3>Thanks, you've paid 🔒</h3>
@@ -361,7 +364,7 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
           </p>
           {ends && <CalendarButtons event={{ title: `Review & approve: ${inv.title}`, details: `Approve or report a problem before the automatic release. PayPact invoice #${inv.id}`, start: ends, url }} />}
           <button className="btn big block" disabled={!!busy} onClick={() => act("approve", { type: "approve" }, "Approved and paid. Thank you!")}>
-            <Busy busy={busy === "approve"}>Approve & release {formatUsd(held, { cents: true })}</Busy>
+            {busy === "approve" ? <><span className="spinner" /> Releasing payment… a few seconds</> : <>Approve & release {formatUsd(held, { cents: true })}</>}
           </button>
           <details>
             <summary>Something's wrong? Report a problem</summary>
@@ -436,7 +439,6 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
         </p>
         <CopyField value={privateLink(inv.id, secret)} />
       </details>
-      {error && <p className="err">{error}</p>}
     </>
   );
 }
@@ -458,8 +460,10 @@ function FreelancerPanel({ inv, url, refresh }: { inv: Invoice; url: string; ref
       await fn();
       toast(done);
       refresh();
+      setTimeout(refresh, 2500);
     } catch (e) {
       setError(errText(e));
+      toast(`Didn't go through: ${errText(e)}`);
     } finally {
       setBusy("");
     }
@@ -496,7 +500,7 @@ function FreelancerPanel({ inv, url, refresh }: { inv: Invoice; url: string; ref
           </p>
           <CalendarButtons event={{ title: `Deliver: ${inv.title}`, details: `PayPact invoice #${inv.id}: mark it delivered when done.`, start: nsToDate(inv.due_at), url }} />
           <button className="btn big block" disabled={!!busy} onClick={() => run("deliver", markDelivered, "Marked delivered. The client has been asked to review.")}>
-            <Busy busy={busy === "deliver"}>I've delivered the work</Busy>
+            {busy === "deliver" ? <><span className="spinner" /> Confirm in your wallet…</> : "I've delivered the work"}
           </button>
         </div>
       )}

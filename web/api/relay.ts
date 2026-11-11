@@ -22,9 +22,13 @@ const env = (k: string) => {
   return v;
 };
 
+// FastNEAR answers in well under a second; the public near.org nodes can take several.
 function rpcUrl() {
-  return process.env.NETWORK === "mainnet" ? "https://rpc.mainnet.near.org" : "https://rpc.testnet.near.org";
+  return process.env.NETWORK === "mainnet" ? "https://rpc.mainnet.fastnear.com" : "https://rpc.testnet.fastnear.com";
 }
+
+/** Return once the transaction has executed (optimistically), not after full finality. */
+const FAST = "EXECUTED_OPTIMISTIC" as const;
 
 async function view<T>(provider: JsonRpcProvider, contract: string, method: string, args: Record<string, unknown>): Promise<T> {
   return provider.callFunction({ contractId: contract, method, args }) as Promise<T>;
@@ -44,9 +48,11 @@ export async function handleRelay(body: any): Promise<Response> {
   if (body.method === "client_action") {
     const { action, signature } = body;
     if (!action || !ACTIONS.has(action.type) || typeof signature !== "string") return json(400, { error: "Bad action" });
-    const invoice = await view<{ client_key: string | null } | null>(provider, contract, "get_invoice", { invoice_id: invoiceId });
+    const [invoice, message] = await Promise.all([
+      view<{ client_key: string | null } | null>(provider, contract, "get_invoice", { invoice_id: invoiceId }),
+      view<string>(provider, contract, "action_message", { invoice_id: invoiceId, action }).catch(() => ""),
+    ]);
     if (!invoice?.client_key) return json(400, { error: "Invoice is not paid yet" });
-    const message = await view<string>(provider, contract, "action_message", { invoice_id: invoiceId, action });
     let ok = false;
     try {
       ok = ed25519.verify(bs58.decode(signature), new TextEncoder().encode(message), bs58.decode(invoice.client_key.replace("ed25519:", "")));
@@ -76,6 +82,7 @@ export async function handleRelay(body: any): Promise<Response> {
       methodName: body.method,
       args,
       gas: 150n * TGAS,
+      waitUntil: FAST,
     });
     const failure = (outcome.status as { Failure?: unknown })?.Failure;
     if (failure) return json(422, { error: JSON.stringify(failure).slice(0, 300) });
@@ -103,13 +110,14 @@ async function demoPay(provider: JsonRpcProvider, contract: string, invoiceId: s
   const relayerId = env("RELAYER_ACCOUNT_ID");
   const relayer = new Account(relayerId, provider, KeyPairSigner.fromSecretKey(env("RELAYER_PRIVATE_KEY") as `ed25519:${string}`));
   try {
-    await relayer.callFunction({ contractId: token, methodName: "mint", args: { account_id: relayerId, amount: invoice.amount }, gas: 30n * TGAS });
+    await relayer.callFunction({ contractId: token, methodName: "mint", args: { account_id: relayerId, amount: invoice.amount }, gas: 30n * TGAS, waitUntil: FAST });
     const outcome = await relayer.callFunctionRaw({
       contractId: token,
       methodName: "ft_transfer_call",
       args: { receiver_id: contract, amount: invoice.amount, msg: JSON.stringify({ invoice_id: invoiceId, client_key: clientKey }) },
       deposit: 1n,
       gas: 150n * TGAS,
+      waitUntil: FAST,
     });
     return json(200, { hash: outcome.transaction.hash });
   } catch (e) {
@@ -179,17 +187,19 @@ async function gasless(provider: JsonRpcProvider, contract: string, body: any): 
         const bounds = (await provider.callFunction({ contractId: token, method: "storage_balance_bounds", args: {} })) as { min: string };
         await relayer.callFunction({
           contractId: token, methodName: "storage_deposit", args: { account_id: accountId, registration_only: true },
-          deposit: BigInt(bounds.min), gas: 30n * TGAS,
+          deposit: BigInt(bounds.min), gas: 30n * TGAS, waitUntil: FAST,
         });
       }
       const id = await relayer.callFunction({
         contractId: contract, methodName: "create_invoice_for", args: { ...req.args, freelancer: accountId }, gas: 50n * TGAS,
+        waitUntil: FAST,
       });
       return json(200, { invoice_id: String(id) });
     }
     await relayer.callFunction({
       contractId: contract, methodName: "mark_delivered_for",
       args: { freelancer: accountId, invoice_id: String(req.args.invoice_id ?? "") }, gas: 50n * TGAS,
+      waitUntil: FAST,
     });
     return json(200, { ok: true });
   } catch (e) {
