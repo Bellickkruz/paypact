@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { formatUsd, nsToDate } from "../lib/money";
 import { getInvoicesFor, getProfile, type Invoice, type Profile } from "../lib/near";
 import { ShareButtons, Stars, shortDate } from "../ui";
+import { displayName } from "../lib/config";
 
 export function ProfilePage({ account }: { account: string }) {
   const [data, setData] = useState<{ p: Profile; avg: number; invoices: Invoice[] } | null>(null);
@@ -25,7 +26,8 @@ export function ProfilePage({ account }: { account: string }) {
     <main className="wrap">
       <div className="card">
         <p className="muted small" style={{ marginBottom: 2 }}>Freelancer on PayPact</p>
-        <h2>{account}</h2>
+        <h2>{displayName(account)}</h2>
+        {displayName(account) !== account && <p className="muted small" style={{ marginTop: -6 }}>{account}</p>}
         <Stars value={avg / 100} count={p.rating_count} />
         <div className="stats" style={{ marginTop: 16 }}>
           <div className="stat"><b>{p.completed + p.split}</b><span className="muted small">jobs paid out</span></div>
@@ -41,13 +43,21 @@ export function ProfilePage({ account }: { account: string }) {
       <div className="card">
         <h3>What clients say</h3>
         {reviews.length === 0 && <p className="muted">No ratings yet.</p>}
+        {reviews.length > 0 && (
+          <p className="hint" style={{ marginTop: -4 }}>
+            Each rating comes from a client who paid that exact job through escrow, so you can see what every review cost. A row of tiny jobs is easy to spot.
+          </p>
+        )}
         <div className="list">
           {reviews.map((i) => (
             <div key={i.id} className="item">
               <div>
-                <Stars value={i.rating!.stars} />
+                <div className="row" style={{ justifyContent: "space-between" }}>
+                  <Stars value={i.rating!.stars} />
+                  <span className="badge ok">✓ Paid {formatUsd(i.amount)} job</span>
+                </div>
                 {i.rating!.comment && <div>"{i.rating!.comment}"</div>}
-                <div className="muted small">{i.title} · {formatUsd(i.amount)} · {shortDate(nsToDate(i.rating!.at))}</div>
+                <div className="muted small">{i.title} · {shortDate(nsToDate(i.rating!.at))} · <a href={`#/i/${i.id}`}>invoice #{i.id}</a></div>
               </div>
             </div>
           ))}

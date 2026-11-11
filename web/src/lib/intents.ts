@@ -65,6 +65,7 @@ export async function quotePayment(params: {
       refundType: "ORIGIN_CHAIN",
       deadline: new Date(Date.now() + 30 * 60_000).toISOString(),
       referral: "paypact",
+      ...(config.appFee ? { appFees: config.appFee } : {}),
     }),
   });
   const json = await res.json();

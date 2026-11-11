@@ -5,6 +5,7 @@ import { NewInvoice } from "./pages/NewInvoice";
 import { InvoicePage } from "./pages/InvoicePage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { Dashboard } from "./pages/Dashboard";
+import { ReceiptPage } from "./pages/ReceiptPage";
 import { config, accountUrl } from "./lib/config";
 
 function useRoute() {
@@ -28,6 +29,7 @@ export function App() {
   if (route === "/new") page = <NewInvoice />;
   else if (route === "/me") page = <Dashboard />;
   else if ((m = route.match(/^\/i\/(\d+)$/))) page = <InvoicePage id={m[1]} />;
+  else if ((m = route.match(/^\/r\/(\d+)$/))) page = <ReceiptPage id={m[1]} />;
   else if ((m = route.match(/^\/p\/([a-z0-9._-]+)$/))) page = <ProfilePage account={m[1]} />;
   else page = <Home />;
   return (

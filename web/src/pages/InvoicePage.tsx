@@ -92,6 +92,11 @@ function InvoiceSummary({ inv, profile }: { inv: Invoice; profile: [Profile, num
       )}
       <Timeline inv={inv} />
       {inv.delivered_at && <DeliveryProof inv={inv} />}
+      {inv.status !== "AwaitingPayment" && inv.status !== "Cancelled" && (
+        <div className="row" style={{ marginTop: 12 }}>
+          <a className="btn small ghost" href={`#/r/${inv.id}`}>🧾 Receipt (PDF)</a>
+        </div>
+      )}
     </div>
   );
 }
@@ -628,6 +633,21 @@ function SaveControlLink({ inv, secret }: { inv: Invoice; secret: string }) {
 
 // ---------------------------------------------------------------- freelancer
 
+/** "Logo (stage 1)" -> new invoice prefilled as "Logo (stage 2)", same amount and terms. */
+function nextStageUrl(inv: Invoice) {
+  const m = inv.title.match(/^(.*?)\s*\(stage (\d+)\)$/i);
+  const base = m ? m[1] : inv.title;
+  const stage = m ? Number(m[2]) + 1 : 2;
+  const q = new URLSearchParams({
+    title: `${base} (stage ${stage})`,
+    amount: (Number(BigInt(inv.amount) / 10_000n) / 100).toString(),
+    upfront: String(Number((BigInt(inv.upfront) * 100n) / BigInt(inv.amount))),
+    review: String(inv.review_days),
+    ...(inv.arbiter ? { arbiter: inv.arbiter } : {}),
+  });
+  return `#/new?${q}`;
+}
+
 function FreelancerPanel({ inv, url, refresh }: { inv: Invoice; url: string; refresh: () => void }) {
   const { accountId } = useWallet();
   const [busy, setBusy] = useState("");
@@ -743,6 +763,7 @@ function FreelancerPanel({ inv, url, refresh }: { inv: Invoice; url: string; ref
           <h3>You've been paid</h3>
           {inv.rating && <p>Your client rated you <Stars value={inv.rating.stars} />{inv.rating.comment && <><br /><i>"{inv.rating.comment}"</i></>}</p>}
           <ShareButtons text={brag} url={url} />
+          <a className="btn" href={nextStageUrl(inv)}>➕ Send the next stage to this client</a>
           <a className="btn ghost" href={`#/p/${inv.freelancer}`}>See my profile</a>
         </div>
       )}

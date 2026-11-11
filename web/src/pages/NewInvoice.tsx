@@ -12,16 +12,31 @@ const DAY_MS = 86_400_000;
 const inDays = (d: string) => Math.max(1, Math.ceil((new Date(`${d}T23:59:00`).getTime() - Date.now()) / DAY_MS));
 const dateIn = (days: number) => new Date(Date.now() + days * DAY_MS).toISOString().slice(0, 10);
 
+/** Prefill from "#/new?title=…&amount=…" (used by "Send the next stage"). */
+function prefill() {
+  const q = new URLSearchParams(location.hash.split("?")[1] ?? "");
+  const num = (k: string, d: number) => (q.has(k) && isFinite(Number(q.get(k))) ? Number(q.get(k)) : d);
+  return {
+    title: q.get("title") ?? "",
+    amount: q.get("amount") ?? "",
+    upfront: UPFRONT.includes(num("upfront", 0)) ? num("upfront", 0) : 0,
+    review: num("review", 5),
+    arbiter: q.get("arbiter") ?? "",
+    isNextStage: q.has("title"),
+  };
+}
+
 export function NewInvoice() {
   const { accountId, connect } = useWallet();
+  const [pre] = useState(prefill);
   const [sentence, setSentence] = useState("");
   const [client, setClient] = useState("");
-  const [amount, setAmount] = useState("");
-  const [title, setTitle] = useState("");
+  const [amount, setAmount] = useState(pre.amount);
+  const [title, setTitle] = useState(pre.title);
   const [due, setDue] = useState(dateIn(7));
-  const [upfront, setUpfront] = useState(0);
-  const [review, setReview] = useState(5);
-  const [arbiter, setArbiter] = useState("");
+  const [upfront, setUpfront] = useState(pre.upfront);
+  const [review, setReview] = useState(pre.review);
+  const [arbiter, setArbiter] = useState(pre.arbiter);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [created, setCreated] = useState<string | null>(null);
@@ -105,7 +120,12 @@ export function NewInvoice() {
 
   return (
     <main className="wrap">
-      <h2 style={{ marginTop: 12 }}>New invoice</h2>
+      <h2 style={{ marginTop: 12 }}>{pre.isNextStage ? "Next stage" : "New invoice"}</h2>
+      {pre.isNextStage && (
+        <div className="card green small">
+          Copied from your last invoice: job, amount and terms. Change anything, then send it to the same client.
+        </div>
+      )}
 
       <div className="card gold">
         <label htmlFor="sentence">Describe it in one sentence</label>

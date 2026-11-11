@@ -34,6 +34,14 @@ export const config = {
   anyChain: network === "mainnet",
   /** The ready-made freelancer behind "Try it now" (testnet only). */
   demoFreelancer: defaults.demoFreelancer,
+  /**
+   * PayPact's revenue: a small fee on any-crypto payments, collected by NEAR Intents
+   * (1Click "appFees") on top of the swap. The freelancer still receives the exact
+   * invoice amount; the client sees the total, fee included, before paying.
+   */
+  appFee: import.meta.env.VITE_APP_FEE_RECIPIENT
+    ? [{ recipient: String(import.meta.env.VITE_APP_FEE_RECIPIENT), fee: Number(import.meta.env.VITE_APP_FEE_BPS ?? 50) }]
+    : undefined,
 };
 
 /** Is this invoice from the "Try it now" demo freelancer? */
