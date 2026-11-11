@@ -85,7 +85,7 @@ export async function callContract(
  * Gasless freelancer actions: the wallet signs a free message (NEP-413, no
  * transaction, no fee) and the PayPact relayer submits it and pays the fee.
  */
-export async function signedRequest(action: "create_invoice" | "mark_delivered", args: object): Promise<Record<string, string>> {
+export async function signedRequest(action: "create_invoice" | "create_project" | "mark_delivered", args: object): Promise<Record<string, string>> {
   const wallet = await getConnector().wallet();
   const message = JSON.stringify({ app: "PayPact", contract: config.contract, action, args, issued_at: Date.now() });
   const nonce = crypto.getRandomValues(new Uint8Array(32));

@@ -57,7 +57,7 @@ export function Dashboard() {
           {list.map((i) => (
             <a key={i.id} className="item" href={`#/i/${i.id}`}>
               <div>
-                <b>{i.title}</b>
+                <b>{i.project ? `${i.project.title} · ${i.title}` : i.title}</b>
                 <div className="muted small">#{i.id} · due {shortDate(nsToDate(i.due_at))}</div>
               </div>
               <div style={{ textAlign: "right" }}>

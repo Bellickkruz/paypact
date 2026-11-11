@@ -5,7 +5,7 @@
 //
 // Example: create one with "Try it now" on https://paypact-alpha.vercel.app, then run
 // this with the number shown on the invoice ("Invoice #12").
-const [id, contract = "pact.paypact-dev-mwaweex6.testnet"] = process.argv.slice(2);
+const [id, contract = "pact2.paypact-dev-mwaweex6.testnet"] = process.argv.slice(2);
 if (!/^\d+$/.test(id ?? "")) {
   console.error("usage: node scripts/check-invoice.mjs <invoice-id> [contract]");
   process.exit(1);
@@ -42,6 +42,7 @@ console.log(`Invoice #${inv.id} on ${contract}`);
 console.log(`  title        ${inv.title}`);
 console.log(`  freelancer   ${inv.freelancer}`);
 console.log(`  status       ${inv.status}`);
+if (inv.project) console.log(`  project      #${inv.project.id} "${inv.project.title}": milestone ${inv.project.index + 1} of ${inv.project.count}, project total ${usd(inv.project.total)} paid once`);
 console.log(`  amount       ${usd(inv.amount)}  (up front ${usd(inv.upfront)}, held in escrow ${usd(BigInt(inv.amount) - BigInt(inv.upfront))})`);
 console.log(`  created      ${date(inv.created_at)}`);
 console.log(`  paid         ${date(inv.funded_at)}`);

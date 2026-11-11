@@ -396,6 +396,56 @@ const DICT: Record<string, [string, string, string, string, string]> = {
   ],
   "PayPact: control link for invoice #{id}": ["PayPact : lien de contrôle de la facture n° {id}", "PayPact: enlace de control de la factura n.º {id}", "PayPact: link de controle da fatura nº {id}", "PayPact: Steuerungslink für Rechnung Nr. {id}", "PayPact：发票 #{id} 的控制链接"],
 
+  // projects (milestones)
+  "🔒 Locked. Due {date}.": ["🔒 Bloqué. À rendre le {date}.", "🔒 Bloqueado. Entrega el {date}.", "🔒 Bloqueado. Entrega em {date}.", "🔒 Gesichert. Fällig am {date}.", "🔒 已锁定，截止 {date}。"],
+  "Not delivered: refund this milestone": ["Non livré : rembourser cette étape", "No entregado: reembolsar este hito", "Não entregue: reembolsar esta etapa", "Nicht geliefert: diesen Meilenstein erstatten", "未交付：退还此里程碑款项"],
+  "Project #{id} · {n} milestones": ["Projet n° {id} · {n} étapes", "Proyecto n.º {id} · {n} hitos", "Projeto nº {id} · {n} etapas", "Projekt Nr. {id} · {n} Meilensteine", "项目 #{id} · {n} 个里程碑"],
+  "✅ Completed": ["✅ Terminé", "✅ Completado", "✅ Concluído", "✅ Abgeschlossen", "✅ 已完成"],
+  "🔒 {done} of {n} done": ["🔒 {done} sur {n} terminées", "🔒 {done} de {n} completados", "🔒 {done} de {n} concluídas", "🔒 {done} von {n} erledigt", "🔒 已完成 {done}/{n}"],
+  "paid once, released milestone by milestone": ["payé en une fois, versé étape par étape", "pagado una vez, liberado hito a hito", "pago uma vez, liberado etapa por etapa", "einmal bezahlt, Meilenstein für Meilenstein ausgezahlt", "一次付清，按里程碑逐步放款"],
+  "💸 **{paid}** paid out · 🔒 **{locked}** locked": ["💸 **{paid}** versés · 🔒 **{locked}** bloqués", "💸 **{paid}** pagados · 🔒 **{locked}** bloqueados", "💸 **{paid}** pagos · 🔒 **{locked}** bloqueados", "💸 **{paid}** ausgezahlt · 🔒 **{locked}** gesichert", "💸 已放款 **{paid}** · 🔒 锁定中 **{locked}**"],
+  "↩️ **{amount}** refunded": ["↩️ **{amount}** remboursés", "↩️ **{amount}** reembolsados", "↩️ **{amount}** reembolsados", "↩️ **{amount}** erstattet", "↩️ 已退款 **{amount}**"],
+  "**{amount} is held safely** by a smart contract. Each milestone's share is released only when you approve that milestone, and refunded to you if it isn't delivered by its due date. Not even PayPact can touch it.": [
+    "**{amount} sont bloqués en sécurité** par un contrat intelligent. La part de chaque étape n'est versée que lorsque vous validez cette étape, et vous est remboursée si elle n'est pas livrée à temps. Même PayPact ne peut pas y toucher.",
+    "**{amount} quedan retenidos de forma segura** por un contrato inteligente. La parte de cada hito solo se libera cuando apruebas ese hito, y se te reembolsa si no se entrega a tiempo. Ni siquiera PayPact puede tocarlos.",
+    "**{amount} ficam guardados com segurança** por um contrato inteligente. A parte de cada etapa só é liberada quando você aprova essa etapa, e é reembolsada se não for entregue no prazo. Nem o PayPact pode mexer neles.",
+    "**{amount} werden sicher verwahrt** von einem Smart Contract. Der Anteil jedes Meilensteins wird erst ausgezahlt, wenn du diesen Meilenstein freigibst, und dir erstattet, wenn er nicht rechtzeitig geliefert wird. Nicht einmal PayPact kann darauf zugreifen.",
+    "**{amount} 由智能合约安全托管。**每个里程碑的款项只有在您确认该里程碑后才会放出；如果未按时交付，将退还给您。连 PayPact 也无法动用。",
+  ],
+  "You're the client. Demo Designer will make {n} posts this month for {total}. Pay once below: each post's share is released only when you approve that post.": [
+    "Vous êtes le client. Demo Designer va réaliser {n} publications ce mois-ci pour {total}. Payez une seule fois ci-dessous : la part de chaque publication n'est versée que lorsque vous la validez.",
+    "Eres el cliente. Demo Designer hará {n} publicaciones este mes por {total}. Paga una sola vez abajo: la parte de cada publicación solo se libera cuando la apruebas.",
+    "Você é o cliente. Demo Designer vai fazer {n} posts este mês por {total}. Pague uma vez abaixo: a parte de cada post só é liberada quando você aprova esse post.",
+    "Du bist der Kunde. Demo Designer erstellt diesen Monat {n} Posts für {total}. Zahle unten einmal: der Anteil jedes Posts wird erst ausgezahlt, wenn du ihn freigibst.",
+    "您是客户。Demo Designer 将在本月为您制作 {n} 篇帖子，总价 {total}。请在下方一次付清：每篇帖子的款项只有在您确认后才会放出。",
+  ],
+  "{title} is delivered. Check it, then tap Approve & release below. Only this milestone's share is paid.": [
+    "{title} est livré. Vérifiez-le, puis appuyez sur Valider et verser ci-dessous. Seule la part de cette étape est versée.",
+    "{title} está entregado. Revísalo y toca Aprobar y liberar abajo. Solo se paga la parte de este hito.",
+    "{title} foi entregue. Confira e toque em Aprovar e liberar abaixo. Só a parte desta etapa é paga.",
+    "{title} ist geliefert. Prüfe es und tippe unten auf Freigeben & auszahlen. Nur der Anteil dieses Meilensteins wird gezahlt.",
+    "{title} 已交付。查看后点击下方的确认并放款。只支付这个里程碑的款项。",
+  ],
+  "All the money is locked. Let Demo Designer deliver {title}:": [
+    "Tout l'argent est bloqué. Laissez Demo Designer livrer {title} :", "Todo el dinero está bloqueado. Deja que Demo Designer entregue {title}:",
+    "Todo o dinheiro está bloqueado. Deixe o Demo Designer entregar {title}:", "Das ganze Geld ist gesichert. Lass Demo Designer {title} liefern:",
+    "全部资金已锁定。让 Demo Designer 交付 {title}：",
+  ],
+  "Every milestone is paid out. Rate Demo Designer below.": [
+    "Toutes les étapes sont versées. Notez Demo Designer ci-dessous.", "Todos los hitos están pagados. Valora a Demo Designer abajo.",
+    "Todas as etapas foram pagas. Avalie o Demo Designer abaixo.", "Alle Meilensteine sind ausgezahlt. Bewerte Demo Designer unten.",
+    "所有里程碑均已放款。请在下方为 Demo Designer 评分。",
+  ],
+  "That's milestones: one payment, released piece by piece. Now try it for real.": [
+    "Voilà les étapes : un seul paiement, versé morceau par morceau. Essayez maintenant pour de vrai.",
+    "Así funcionan los hitos: un solo pago, liberado por partes. Ahora pruébalo de verdad.",
+    "Assim funcionam as etapas: um pagamento, liberado parte por parte. Agora experimente de verdade.",
+    "So funktionieren Meilensteine: eine Zahlung, Stück für Stück ausgezahlt. Probier es jetzt richtig aus.",
+    "这就是里程碑：一次付款，分批放款。现在来真的试试吧。",
+  ],
+  "▶ Demo · project with {n} milestones": ["▶ Démo · projet en {n} étapes", "▶ Demo · proyecto con {n} hitos", "▶ Demo · projeto com {n} etapas", "▶ Demo · Projekt mit {n} Meilensteinen", "▶ 演示 · {n} 个里程碑的项目"],
+  "Demo Designer delivers {title}": ["Demo Designer livre {title}", "Demo Designer entrega {title}", "Demo Designer entrega {title}", "Demo Designer liefert {title}", "Demo Designer 交付 {title}"],
+
   // shared bits
   "Copy": ["Copier", "Copiar", "Copiar", "Kopieren", "复制"],
   "Copied": ["Copié", "Copiado", "Copiado", "Kopiert", "已复制"],

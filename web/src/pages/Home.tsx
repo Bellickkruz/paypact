@@ -11,15 +11,17 @@ export function Home() {
     go("/new");
   };
   const [trying, setTrying] = useState(false);
-  const tryDemo = async () => {
-    setTrying(true);
+  const [tryingProject, setTryingProject] = useState(false);
+  const tryDemo = async (kind: "invoice" | "project" = "invoice") => {
+    const set = kind === "project" ? setTryingProject : setTrying;
+    set(true);
     try {
-      const { invoice_id } = (await relay({ method: "demo_create" })) as unknown as { invoice_id: string };
+      const { invoice_id } = (await relay({ method: "demo_create", kind })) as unknown as { invoice_id: string };
       go(`/i/${invoice_id}`);
     } catch (e) {
       toast(`Couldn't start the demo: ${errText(e)}`);
     } finally {
-      setTrying(false);
+      set(false);
     }
   };
   return (
@@ -36,8 +38,11 @@ export function Home() {
         </div>
         {config.demoFreelancer && (
           <div className="trynow">
-            <button className="btn big ghost" disabled={trying} onClick={tryDemo}>
+            <button className="btn big ghost" disabled={trying} onClick={() => tryDemo("invoice")}>
               <Busy busy={trying}>▶ Try it now, no wallet needed</Busy>
+            </button>
+            <button className="btn ghost" disabled={tryingProject} onClick={() => tryDemo("project")}>
+              <Busy busy={tryingProject}>▶ Try a project: 4 posts, paid in batches</Busy>
             </button>
             <span className="muted small">Play the client: pay a sample invoice, get the work, approve it. About 60 seconds.</span>
           </div>
@@ -69,6 +74,7 @@ export function Home() {
             <li>Never start work on a promise again</li>
             <li>No awkward chasing: polite reminders written for you, plus calendar alerts</li>
             <li>Ask for a deposit up front, if you agree one</li>
+            <li>Big jobs: split into milestones or equal batches. Paid once, released piece by piece</li>
             <li>A track record clients can't fake or delete</li>
           </ul>
         </div>

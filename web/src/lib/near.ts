@@ -37,6 +37,8 @@ export interface Invoice {
   rating: { stars: number; comment: string | null; at: string } | null;
   /** Proof of delivery, recorded on-chain when the work was marked delivered. */
   delivery: { link: string | null; note: string | null } | null;
+  /** Set when this invoice is one milestone of a project (paid once, released milestone by milestone). */
+  project: { id: string; index: number; count: number; title: string; total: string } | null;
 }
 
 export interface Profile {
@@ -91,6 +93,8 @@ export const view = <T>(method: string, args: object = {}) => viewOn<T>(config.c
 export const getInvoice = (id: string) => view<Invoice | null>("get_invoice", { invoice_id: id });
 export const getInvoicesFor = (freelancer: string) =>
   view<Invoice[]>("get_invoices_for", { freelancer, from: 0, limit: 100 });
+/** Every milestone of a project, in order (`id` is the first milestone's id). */
+export const getProject = (id: string) => view<Invoice[]>("get_project", { project_id: id });
 export const getProfile = (account_id: string) => view<[Profile, number]>("get_profile", { account_id });
 export const actionMessage = (invoice_id: string, action: ClientAction) =>
   view<string>("action_message", { invoice_id, action });

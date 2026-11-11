@@ -14,6 +14,11 @@
 //! An invoice can ask for part of the amount up front (`upfront`): that share is
 //! paid to the freelancer the moment the client pays, and only the rest is held.
 //!
+//! A project is 2-12 milestones (each its own invoice, with its own title, amount
+//! and due date) created together and paid with ONE payment. Every milestone then
+//! runs the normal invoice lifecycle on its own: delivered, approved and released
+//! one by one, disputed or refunded separately if its due date passes undelivered.
+//!
 //! Each freelancer has an on-chain profile (jobs, earnings, on-time delivery,
 //! disputes) and ratings that only a client who actually paid can leave.
 //!
@@ -106,7 +111,34 @@ pub struct Invoice {
     pub rating: Option<Rating>,
     /// Proof of delivery the freelancer attached; its time is `delivered_at`.
     pub delivery: Option<Delivery>,
+    /// Set when this invoice is one milestone of a project.
+    pub project: Option<ProjectRef>,
 }
+
+/// A milestone's place in its project. A project's milestones have consecutive ids
+/// starting at `id` (the first milestone), and are all paid by one payment to `id`.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug)]
+pub struct ProjectRef {
+    pub id: U64,
+    /// 0-based position of this milestone.
+    pub index: u8,
+    pub count: u8,
+    pub title: String,
+    /// Sum of all milestone amounts: what the client pays.
+    pub total: U128,
+}
+
+/// One milestone when creating a project.
+#[near(serializers = [json])]
+#[derive(Clone, Debug)]
+pub struct MilestoneInput {
+    pub title: String,
+    pub amount: U128,
+    pub due_in_days: u32,
+}
+
+const MAX_MILESTONES: usize = 12;
 
 /// What the freelancer handed over: a link to the work and a short note,
 /// recorded on-chain so a later dispute can be judged against it.
@@ -244,6 +276,37 @@ impl Contract {
         self.internal_mark_delivered(&freelancer, invoice_id, link, note);
     }
 
+    /// Create a project: 2-12 milestones the client pays for with one payment.
+    /// Callable with a function-call key (no deposit), like `create_invoice`.
+    pub fn create_project(
+        &mut self,
+        token: AccountId,
+        title: String,
+        milestones: Vec<MilestoneInput>,
+        review_days: Option<u32>,
+        dispute_timeout_days: Option<u32>,
+        arbiter: Option<AccountId>,
+    ) -> U64 {
+        let freelancer = env::predecessor_account_id();
+        self.internal_create_project(freelancer, token, title, milestones, review_days, dispute_timeout_days, arbiter)
+    }
+
+    /// Gasless `create_project`, submitted by the relayer for a freelancer who signed the request.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_project_for(
+        &mut self,
+        freelancer: AccountId,
+        token: AccountId,
+        title: String,
+        milestones: Vec<MilestoneInput>,
+        review_days: Option<u32>,
+        dispute_timeout_days: Option<u32>,
+        arbiter: Option<AccountId>,
+    ) -> U64 {
+        self.assert_relayer();
+        self.internal_create_project(freelancer, token, title, milestones, review_days, dispute_timeout_days, arbiter)
+    }
+
     /// Owner sets the relayer account (or removes it with None).
     #[payable]
     pub fn set_relayer(&mut self, relayer: Option<AccountId>) {
@@ -271,6 +334,15 @@ impl Contract {
         let mut inv = self.get_mut(invoice_id);
         require!(env::predecessor_account_id() == inv.freelancer, "Only the freelancer");
         require!(inv.status == Status::AwaitingPayment, "Invoice is already paid");
+        if let Some(p) = inv.project.clone() {
+            // A project is paid as a whole, so it is withdrawn as a whole.
+            for id in Self::project_ids(&p) {
+                let mut m = self.get_mut(U64(id));
+                m.status = Status::Cancelled;
+                self.save(m);
+            }
+            return;
+        }
         inv.status = Status::Cancelled;
         self.save(inv);
     }
@@ -371,8 +443,18 @@ impl Contract {
                 PromiseOrValue::Promise(self.settle(&mut inv, 0, amount, Status::Refunded))
             }
             ClientAction::SetRefundAccount { account } => {
-                inv.client_refund_to = Some(account);
+                inv.client_refund_to = Some(account.clone());
+                let project = inv.project.clone();
+                let this = inv.id.0;
                 self.save(inv);
+                // One client, one refund account for every milestone of the project.
+                if let Some(p) = project {
+                    for id in Self::project_ids(&p).filter(|id| *id != this) {
+                        let mut m = self.get_mut(U64(id));
+                        m.client_refund_to = Some(account.clone());
+                        self.save(m);
+                    }
+                }
                 PromiseOrValue::Value(())
             }
             ClientAction::Rate { stars, comment } => {
@@ -381,6 +463,9 @@ impl Contract {
                     "Only a settled invoice can be rated"
                 );
                 require!(inv.rating.is_none(), "Already rated");
+                if let Some(p) = &inv.project {
+                    require!(p.index + 1 == p.count, "A project is rated once, on its last milestone");
+                }
                 require!((1..=5).contains(&stars), "Stars must be 1-5");
                 if let Some(c) = &comment {
                     require!(c.len() <= 280, "Comment is too long");
@@ -469,6 +554,9 @@ impl Contract {
             env::log_str("payment_rejected reason=unknown_invoice");
             return PromiseOrValue::Value(amount);
         };
+        if let Some(p) = inv.project.clone() {
+            return self.fund_project(&token, p, amount, payment);
+        }
         if inv.token != token
             || inv.status != Status::AwaitingPayment
             || amount.0 < inv.amount.0
@@ -528,6 +616,16 @@ impl Contract {
             .take(limit.unwrap_or(50).min(100) as usize)
             .cloned()
             .collect()
+    }
+
+    /// Every milestone of the project `project_id` (its first milestone's id), in order.
+    pub fn get_project(&self, project_id: U64) -> Vec<Invoice> {
+        let Some(first) = self.invoices.get(&project_id.0) else { return vec![] };
+        let Some(p) = first.project.clone() else { return vec![] };
+        if p.id != project_id {
+            return vec![];
+        }
+        Self::project_ids(&p).filter_map(|id| self.invoices.get(&id).cloned()).collect()
     }
 
     /// A freelancer's track record and average rating (x100, e.g. 480 = 4.8 stars).
@@ -629,6 +727,7 @@ impl Contract {
                 owed_client: U128(0),
                 rating: None,
                 delivery: None,
+                project: None,
             },
         );
         env::log_str(&format!("invoice_created id={id}"));
@@ -661,6 +760,76 @@ impl Contract {
             }
         });
         self.save(inv);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn internal_create_project(
+        &mut self,
+        freelancer: AccountId,
+        token: AccountId,
+        title: String,
+        milestones: Vec<MilestoneInput>,
+        review_days: Option<u32>,
+        dispute_timeout_days: Option<u32>,
+        arbiter: Option<AccountId>,
+    ) -> U64 {
+        let n = milestones.len();
+        require!((2..=MAX_MILESTONES).contains(&n), "A project has 2-12 milestones");
+        let title = title.trim().to_string();
+        require!(!title.is_empty() && title.len() <= 100, "Project title must be 1-100 characters");
+        let mut total: u128 = 0;
+        let mut last_due = 0;
+        for m in &milestones {
+            total = total.checked_add(m.amount.0).unwrap_or_else(|| env::panic_str("Total is too large"));
+            require!(m.due_in_days >= last_due, "Milestone due dates must be in order");
+            last_due = m.due_in_days;
+        }
+        let mut ids = Vec::with_capacity(n);
+        for m in milestones {
+            ids.push(self.internal_create(
+                freelancer.clone(), token.clone(), m.amount, m.title, m.due_in_days,
+                review_days, dispute_timeout_days, arbiter.clone(), Some(0),
+            ));
+        }
+        let first = ids[0];
+        for (index, id) in ids.iter().enumerate() {
+            let mut inv = self.get_mut(*id);
+            inv.project = Some(ProjectRef { id: first, index: index as u8, count: n as u8, title: title.clone(), total: U128(total) });
+            self.save(inv);
+        }
+        env::log_str(&format!("project_created id={} milestones={n} total={total}", first.0));
+        first
+    }
+
+    fn project_ids(p: &ProjectRef) -> std::ops::Range<u64> {
+        p.id.0..p.id.0 + p.count as u64
+    }
+
+    /// One payment to the first milestone funds every milestone of the project.
+    fn fund_project(&mut self, token: &AccountId, p: ProjectRef, amount: U128, payment: PaymentMsg) -> PromiseOrValue<U128> {
+        let milestones: Vec<Invoice> = Self::project_ids(&p).filter_map(|id| self.invoices.get(&id).cloned()).collect();
+        let ok = p.index == 0
+            && payment.invoice_id == p.id
+            && milestones.len() == p.count as usize
+            && milestones.iter().all(|m| m.token == *token && m.status == Status::AwaitingPayment)
+            && amount.0 >= p.total.0
+            && parse_ed25519_key(&payment.client_key).is_some();
+        if !ok {
+            env::log_str(&format!("payment_rejected id={} reason=project_mismatch", payment.invoice_id.0));
+            return PromiseOrValue::Value(amount);
+        }
+        let now = U64(env::block_timestamp());
+        let freelancer = milestones[0].freelancer.clone();
+        for mut m in milestones {
+            m.status = Status::Funded;
+            m.funded_at = Some(now);
+            m.client_key = Some(payment.client_key.clone());
+            m.client_refund_to = payment.refund_to.clone();
+            self.save(m);
+        }
+        self.update_profile(&freelancer, |pr| pr.invoices_paid += p.count as u32);
+        env::log_str(&format!("project_funded id={} total={}", p.id.0, p.total.0));
+        PromiseOrValue::Value(U128(amount.0 - p.total.0))
     }
 
     fn assert_relayer(&self) {

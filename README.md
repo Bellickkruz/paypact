@@ -1,9 +1,9 @@
 # PayPact
 
-Escrowed invoice links on NEAR. A freelancer sends a link; the client pays with the crypto they already hold (on mainnet, any coin on any chain through NEAR Intents) without creating an account; a smart contract holds the money until the client approves the work, and refunds it if nothing is delivered.
+Escrowed invoice links on NEAR. A freelancer sends a link; the client pays with the crypto they already hold (on mainnet, any coin on any chain through NEAR Intents) without creating an account; a smart contract holds the money until the client approves the work, and refunds it if nothing is delivered. Bigger jobs can be split into milestones or equal batches: the client pays once, and each part is released when it is approved.
 
 - **Live demo (NEAR testnet):** https://paypact-alpha.vercel.app
-- **Contract:** [`pact.paypact-dev-mwaweex6.testnet`](https://testnet.nearblocks.io/address/pact.paypact-dev-mwaweex6.testnet) (Rust, near-sdk 5)
+- **Contract:** [`pact2.paypact-dev-mwaweex6.testnet`](https://testnet.nearblocks.io/address/pact2.paypact-dev-mwaweex6.testnet) (Rust, near-sdk 5)
 - **Tracks:** `realworld` (invoicing and stablecoin rails), `security` (AI assistant on a function-call key that cannot move money)
 - **Other project by the same author:** [Market Radar](https://github.com/Bellickkruz/market-radar), an independent prediction-market tool (see [Disclosure](#disclosure))
 
@@ -13,12 +13,16 @@ Freelancers working across borders with clients they don't know have two bad opt
 
 ## What PayPact does
 
-1. The freelancer creates an invoice (amount in USD stablecoin, job title, due date, optional up-front percentage, review window, optional referee) and shares the link on WhatsApp, Telegram or X. Creating it is free: the freelancer signs a message and PayPact pays the network fee.
+1. The freelancer creates an invoice (amount in USD stablecoin, job title, due date, optional up-front percentage, review window, optional referee) and shares the link on WhatsApp, Telegram or X. Creating it is free: the freelancer signs a message and PayPact pays the network fee. For bigger jobs, the freelancer chooses a payment plan:
+   - **Milestones:** 2 to 12 steps, each with its own name, amount and due date (for example design, build, launch).
+   - **Equal batches:** a total split into equal parts spread over a period. For example, $1,000 for 4 posts over a month becomes 4 × $250, due weekly.
 2. The client opens the link, sees the freelancer's on-chain track record and exactly what is paid now and what is held, and pays. No account or wallet is needed: the browser makes a private key that becomes the client's identity for this invoice.
-3. The money is locked in the contract. Any agreed up-front share goes to the freelancer immediately.
+3. The money is locked in the contract. Any agreed up-front share goes to the freelancer immediately. A project is paid **once**, in full, and every milestone is locked from that moment.
 4. The freelancer marks the work delivered and attaches a link and note. Both are recorded on-chain with the delivery time.
 5. The client approves and the freelancer is paid in seconds, or reports a problem, which freezes the money. A frozen invoice ends in an agreed split, a referee's decision, or a 50/50 split after a timeout. If the client stays silent, the money is released when the review window ends. If nothing is delivered by the due date (plus 2 days' grace), the client can take a refund.
-6. The client rates the freelancer. Only a client who paid can rate, once, and each rating is shown with the size of the job it came from.
+6. The client rates the freelancer. Only a client who paid can rate, once (once per project, on its last milestone), and each rating is shown with the size of the job it came from.
+
+In a project, steps 4 and 5 happen **per milestone**. Each milestone is delivered with its own proof and approved on its own, and only its share is released. A milestone that is not delivered by its own due date can be refunded on its own while the others continue.
 
 ## Try it in 2 minutes (no wallet needed)
 
@@ -34,7 +38,8 @@ All steps run on NEAR testnet with free test dollars (`tUSDC`). Timings are from
 | 6 | Pick stars, write a comment, tap **"Post rating"**. | *Step 4 of 4* is complete. Tap **"See Demo Designer's profile"**: the rating is listed with a *✓ Paid $… job* badge. |
 | 7 | Back on the invoice, tap **"🧾 Receipt (PDF)"**, then **"Download PDF / Print"**. | A receipt with the amounts, dates, proof of delivery and contract address. |
 | 8 | On any invoice, change the **🌐** menu to *Français*, *Español*, *Português*, *Deutsch* or *中文*. | The client side of the page (terms, amounts, buttons, dates) switches language. It opens in the browser's language by default. |
-| 9 | Run `node scripts/check-invoice.mjs <number>` with the invoice number (Node 18+, no install). | The same invoice read straight from the contract: status, amounts, timestamps, proof link, rating, the client's public key and the freelancer's profile. |
+| 9 | Back on the home page, tap **"▶ Try a project: 4 posts, paid in batches"**. | A $1,000 project with 4 milestones ("Post 1 of 4" … "Post 4 of 4", $250 each, due weekly), shown as a timeline. Pay once ($1,000). Then, for each post, tap **"Demo Designer delivers Post N of 4"** and **"Approve & release $250.00"**. **See:** a progress bar going from *$250 paid out · $750 locked* to *$1,000 paid out · $0 locked*, each milestone turning *✅ Paid out* with its proof. The project takes about 60 s. |
+| 10 | Run `node scripts/check-invoice.mjs <number>` with the invoice number (Node 18+, no install). | The same invoice read straight from the contract: status, amounts, timestamps, proof link, rating, the client's public key and the freelancer's profile. |
 
 ### As a freelancer (needs a NEAR testnet wallet)
 
@@ -44,6 +49,7 @@ All steps run on NEAR testnet with free test dollars (`tUSDC`). Timings are from
 4. Open the link in a private window and pay as the client. Back in your window: *🔒 $… is locked for you*, with calendar buttons for the due date.
 5. Add a link and a note, tap **"I've delivered the work"**, and sign. **See:** status *Delivered, in review*, with polite nudge messages to send to the client.
 6. After the client approves: *🎉 You've been paid*, a share button, and **"➕ Send the next stage to this client"**, which opens a new invoice pre-filled from this one.
+7. To try a project, choose **Equal batches** (for example total $1,000, 4 parts, over 1 month, each part a "Post") or **Milestones** (your own steps) on the create screen. **See:** a preview of every part with its amount and due date before you create it.
 
 ## How it works
 
@@ -58,6 +64,7 @@ All steps run on NEAR testnet with free test dollars (`tUSDC`). Timings are from
 
 **Contract** (`contract/src/lib.rs`)
 - Invoice statuses: `AwaitingPayment → Funded → Delivered → Released`, plus `Disputed`, `Split`, `Refunded`, `Cancelled`.
+- **Projects:** `create_project(title, milestones[{title, amount, due_in_days}], …)` creates 2–12 milestone invoices with consecutive ids, linked by `project`. One `ft_transfer_call` of the total to the first milestone funds them all. Each milestone then follows the normal lifecycle. A cancel cancels the whole project. A refund account applies to every milestone. A rating is allowed once, on the last milestone. `get_project(id)` returns the milestones in order.
 - **Payment:** `ft_on_transfer` (NEP-141). The `msg` carries `{invoice_id, client_key, refund_to?}`. A wrong token, wrong amount or bad message is refunded in full. Any up-front share is paid out immediately.
 - **Client actions** (`client_action`): approve, dispute, propose or accept a split, refund if undelivered, set a refund account, rate. Each is a message signed by the client's key over `{contract}|invoice:{id}|nonce:{n}|{action}`. The nonce makes every signature single-use, and anyone may submit it.
 - **Freelancer actions:** `create_invoice`, `mark_delivered(link, note)`, `cancel_invoice`, `propose_split`, `accept_split`, `refund_client`.
@@ -105,8 +112,9 @@ NEAR Intents has no testnet (hackathon FAQ Q-007), so the full any-crypto paymen
 Requirements: Rust with the `wasm32-unknown-unknown` target, [cargo-near](https://github.com/near/cargo-near) 0.23 and Node 20 or newer.
 
 ```bash
-# 1. Contract: 33 unit tests (happy path, rejections, replay, timeouts, disputes,
-#    arbiter, up-front payments, ratings, relayer limits, AI-key deposit refusal)
+# 1. Contract: 43 unit tests (happy path, rejections, replay, timeouts, disputes,
+#    arbiter, up-front payments, ratings, relayer limits, AI-key deposit refusal,
+#    projects: one payment funds all milestones, release one by one, per-milestone refund)
 cd contract && cargo test
 cargo near build non-reproducible-wasm        # -> target/near/invoice_escrow.wasm
 
@@ -150,7 +158,6 @@ web/public/          favicon, sample delivery page used by the demo
 
 - Deploy on mainnet with a revenue fee on any-crypto payments, collected by NEAR Intents `appFees`. This is already wired behind `VITE_APP_FEE_RECIPIENT`; the freelancer still receives the exact invoice amount.
 - An AI job checklist written from the freelancer's chat with the client and agreed before payment, and an AI-suggested fair split in disputes. The AI suggests; both parties accept with their own keys.
-- Milestones in one contract invoice (today: "Send the next stage" creates a linked follow-up invoice).
 - PayPact for Teams: budgets that an AI agent spends within on-chain limits.
 
 ## Disclosure

@@ -225,3 +225,22 @@ footer { text-align: center; color: var(--muted); font-size: 13px; padding: 24px
 .langpick select { border: 1px solid var(--line); background: var(--raised); color: var(--ink); border-radius: 99px; padding: 3px 8px; font: inherit; font-size: 13px; }
 .translate { font-size: 13px; font-weight: 600; white-space: nowrap; }
 .copy .btn { white-space: nowrap; }
+
+/* Milestones */
+.ms-row { display: grid; grid-template-columns: 26px 1fr 84px; gap: 6px; align-items: center; }
+.ms-row .ms-date { grid-column: 2 / 4; }
+.ms-row > button { grid-column: 4; grid-row: 1; }
+.ms-num { width: 26px; height: 26px; border-radius: 50%; background: var(--orange); color: #fff; font-weight: 800; font-size: 13px; display: grid; place-items: center; }
+.ms-preview { display: grid; gap: 6px; background: var(--raised); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 4px 0 12px; }
+.ms-list { display: grid; gap: 0; margin-top: 12px; }
+.ms-item { display: grid; grid-template-columns: 30px 1fr; gap: 10px; position: relative; padding-bottom: 14px; }
+.ms-item:not(:last-child)::before { content: ""; position: absolute; left: 14px; top: 30px; bottom: 0; width: 2px; background: var(--line); }
+.ms-item.done:not(:last-child)::before { background: var(--ink); }
+.ms-dot { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 13px; border: 2px solid var(--line); background: var(--card); z-index: 1; }
+.ms-item.done .ms-dot { background: var(--ink); color: var(--card); border-color: var(--ink); }
+.ms-item.now .ms-dot { background: var(--orange); color: #fff; border-color: var(--orange); }
+.ms-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+.ms-body { margin-top: 8px; }
+.ms-body > .card { margin-bottom: 8px; }
+.ms-progress { height: 8px; border-radius: 99px; background: var(--line); overflow: hidden; margin: 10px 0 4px; }
+.ms-progress > span { display: block; height: 100%; background: var(--ok); }

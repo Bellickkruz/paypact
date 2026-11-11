@@ -462,3 +462,147 @@ fn delivery_link_must_be_https() {
     set_ctx("tolu.near", 0, 2 * DAY);
     c.mark_delivered(U64(id), Some("javascript:alert(1)".into()), None);
 }
+
+// ---------------------------------------------------------------- projects (milestones)
+
+const POST: u128 = 250_000_000; // $250
+
+/// "4 posts over a month for $1,000": four $250 milestones due weekly.
+fn setup_project() -> (Contract, u64) {
+    set_ctx("owner.near", 0, 0);
+    let mut c = Contract::new(acc("owner.near"), vec![acc(USDC)]);
+    set_ctx("ada.near", 0, 0);
+    let milestones = (1..=4)
+        .map(|i| MilestoneInput { title: format!("Post {i} of 4"), amount: U128(POST), due_in_days: 7 * i })
+        .collect();
+    let id = c.create_project(acc(USDC), "Instagram posts for Bloom".into(), milestones, Some(3), None, None);
+    (c, id.0)
+}
+
+#[test]
+fn project_one_payment_funds_every_milestone() {
+    let (mut c, id) = setup_project();
+    let ms = c.get_project(U64(id));
+    assert_eq!(ms.len(), 4);
+    assert_eq!(ms[3].project.as_ref().unwrap().total, U128(4 * POST));
+    assert_eq!(ms[2].due_at, U64(21 * DAY));
+    let client = Client::new();
+    // Too little: refunded, nothing funded.
+    assert_eq!(pay(&mut c, id, &client, 4 * POST - 1, None), 4 * POST - 1);
+    // Paying a later milestone on its own is refused.
+    assert_eq!(pay(&mut c, id + 1, &client, 4 * POST, None), 4 * POST);
+    assert!(c.get_project(U64(id)).iter().all(|m| m.status == Status::AwaitingPayment));
+    // The full amount to the first milestone funds them all, with one client key.
+    assert_eq!(pay(&mut c, id, &client, 4 * POST + 5, None), 5);
+    let ms = c.get_project(U64(id));
+    assert!(ms.iter().all(|m| m.status == Status::Funded && m.client_key == Some(client.public())));
+    assert_eq!(c.get_profile(acc("ada.near")).0.invoices_paid, 4);
+}
+
+#[test]
+fn project_milestones_release_one_by_one() {
+    let (mut c, id) = setup_project();
+    let client = Client::new();
+    pay(&mut c, id, &client, 4 * POST, None);
+    set_ctx("ada.near", 0, 6 * DAY);
+    c.mark_delivered(U64(id), Some("https://instagram.com/p/1".into()), None);
+    act(&mut c, id, &client, ClientAction::Approve, 7 * DAY);
+    assert!(get_logs().iter().any(|l| l.contains("to_freelancer=250000000")));
+    let ms = c.get_project(U64(id));
+    assert_eq!(ms[0].status, Status::Released);
+    assert!(ms[1..].iter().all(|m| m.status == Status::Funded), "other milestones stay locked");
+    // Milestone 2: client silent, released after its own review window.
+    set_ctx("ada.near", 0, 13 * DAY);
+    c.mark_delivered(U64(id + 1), None, None);
+    set_ctx("anyone.near", 0, 16 * DAY + 1);
+    let _ = c.release_after_review(U64(id + 1));
+    assert_eq!(status(&c, id + 1), Status::Released);
+    assert_eq!(c.get_profile(acc("ada.near")).0.total_earned, U128(2 * POST));
+}
+
+#[test]
+fn project_undelivered_milestone_refunds_alone() {
+    let (mut c, id) = setup_project();
+    let client = Client::new();
+    pay(&mut c, id, &client, 4 * POST, Some("sarah.near"));
+    // Milestone 1 delivered and approved; milestone 2 (due day 14) never arrives.
+    set_ctx("ada.near", 0, 6 * DAY);
+    c.mark_delivered(U64(id), None, None);
+    act(&mut c, id, &client, ClientAction::Approve, 7 * DAY);
+    act(&mut c, id + 1, &client, ClientAction::RefundUndelivered, 17 * DAY);
+    assert_eq!(status(&c, id + 1), Status::Refunded);
+    assert!(get_logs().iter().any(|l| l.contains("to_client=250000000")));
+    assert_eq!(status(&c, id + 2), Status::Funded, "later milestones are untouched");
+}
+
+#[test]
+fn project_refund_account_applies_to_all_milestones() {
+    let (mut c, id) = setup_project();
+    let client = Client::new();
+    pay(&mut c, id, &client, 4 * POST, None);
+    act(&mut c, id, &client, ClientAction::SetRefundAccount { account: acc("sarah.near") }, 2 * DAY);
+    assert!(c.get_project(U64(id)).iter().all(|m| m.client_refund_to == Some(acc("sarah.near"))));
+}
+
+#[test]
+fn project_rated_once_on_last_milestone() {
+    let (mut c, id) = setup_project();
+    let client = Client::new();
+    pay(&mut c, id, &client, 4 * POST, None);
+    for i in 0..4u64 {
+        set_ctx("ada.near", 0, (7 * i + 6) * DAY);
+        c.mark_delivered(U64(id + i), None, None);
+        act(&mut c, id + i, &client, ClientAction::Approve, (7 * i + 6) * DAY);
+    }
+    act(&mut c, id + 3, &client, ClientAction::Rate { stars: 5, comment: Some("Great posts".into()) }, 30 * DAY);
+    assert_eq!(c.get_profile(acc("ada.near")).0.rating_count, 1);
+    assert_eq!(c.get_profile(acc("ada.near")).0.completed, 4);
+}
+
+#[test]
+fn project_cancel_withdraws_every_milestone() {
+    let (mut c, id) = setup_project();
+    set_ctx("ada.near", 1, DAY);
+    c.cancel_invoice(U64(id + 2));
+    assert!(c.get_project(U64(id)).iter().all(|m| m.status == Status::Cancelled));
+}
+
+#[test]
+#[should_panic(expected = "A project has 2-12 milestones")]
+fn project_needs_two_milestones() {
+    set_ctx("owner.near", 0, 0);
+    let mut c = Contract::new(acc("owner.near"), vec![acc(USDC)]);
+    set_ctx("ada.near", 0, 0);
+    c.create_project(acc(USDC), "x".into(), vec![MilestoneInput { title: "a".into(), amount: U128(1), due_in_days: 1 }], None, None, None);
+}
+
+#[test]
+#[should_panic(expected = "Milestone due dates must be in order")]
+fn project_due_dates_in_order() {
+    set_ctx("owner.near", 0, 0);
+    let mut c = Contract::new(acc("owner.near"), vec![acc(USDC)]);
+    set_ctx("ada.near", 0, 0);
+    let m = |d| MilestoneInput { title: "a".into(), amount: U128(1), due_in_days: d };
+    c.create_project(acc(USDC), "x".into(), vec![m(10), m(5)], None, None, None);
+}
+
+#[test]
+#[should_panic(expected = "Only the PayPact relayer")]
+fn project_gasless_only_by_relayer() {
+    let (mut c, _) = setup_project();
+    set_ctx("mallory.near", 0, 0);
+    let m = |d| MilestoneInput { title: "a".into(), amount: U128(1), due_in_days: d };
+    c.create_project_for(acc("ada.near"), acc(USDC), "x".into(), vec![m(1), m(2)], None, None, None);
+}
+
+#[test]
+#[should_panic(expected = "A project is rated once, on its last milestone")]
+fn project_earlier_milestone_cannot_be_rated() {
+    let (mut c, id) = setup_project();
+    let client = Client::new();
+    pay(&mut c, id, &client, 4 * POST, None);
+    set_ctx("ada.near", 0, 6 * DAY);
+    c.mark_delivered(U64(id), None, None);
+    act(&mut c, id, &client, ClientAction::Approve, 6 * DAY);
+    act(&mut c, id, &client, ClientAction::Rate { stars: 5, comment: None }, 7 * DAY);
+}

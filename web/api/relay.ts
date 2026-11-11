@@ -18,7 +18,7 @@ const TGAS = 1_000_000_000_000n;
 const ACTIONS = new Set(["approve", "dispute", "propose_split", "accept_split", "refund_undelivered", "set_refund_account", "rate"]);
 const OPEN_METHODS = new Set(["release_after_review", "resolve_stale_dispute", "retry_payout"]);
 
-export const TESTNET_CONTRACT = "pact.paypact-dev-mwaweex6.testnet";
+export const TESTNET_CONTRACT = "pact2.paypact-dev-mwaweex6.testnet";
 /** The ready-made freelancer behind the "Try it now" demo (testnet only). */
 export const DEMO_FREELANCER = "demo-designer.paypact-dev-mwaweex6.testnet";
 
@@ -53,7 +53,7 @@ export async function handleRelay(body: any, origin = ""): Promise<Response> {
   const provider = new JsonRpcProvider({ url: rpcUrl() });
   if (body?.method === "gasless") return gasless(provider, contract, body);
   const testnet = process.env.NETWORK !== "mainnet";
-  if (body?.method === "demo_create" && testnet) return demoCreate(provider, contract);
+  if (body?.method === "demo_create" && testnet) return demoCreate(provider, contract, body.kind === "project");
   if (body?.method === "demo_deliver" && testnet) return demoDeliver(provider, contract, String(body.invoice_id ?? ""), origin);
   const invoiceId = String(body?.invoice_id ?? "");
   if (!/^\d{1,18}$/.test(invoiceId)) return json(400, { error: "Bad invoice id" });
@@ -116,19 +116,22 @@ async function demoPay(provider: JsonRpcProvider, contract: string, invoiceId: s
   }
   if (!clientKey.startsWith("ed25519:") || keyBytes !== 32) return json(400, { error: "Bad client key" });
   const token = env("PAYPACT_TOKEN");
-  const invoice = await view<{ amount: string; status: string; token: string } | null>(provider, contract, "get_invoice", {
-    invoice_id: invoiceId,
-  });
+  const invoice = await view<{ amount: string; status: string; token: string; project: { id: string; total: string } | null } | null>(
+    provider, contract, "get_invoice", { invoice_id: invoiceId },
+  );
   if (!invoice || invoice.status !== "AwaitingPayment") return json(400, { error: "Invoice is not awaiting payment" });
+  // A project is paid once, in full, to its first milestone.
+  if (invoice.project && invoice.project.id !== invoiceId) return json(400, { error: "Pay the project from its first milestone" });
+  const amount = invoice.project ? invoice.project.total : invoice.amount;
   if (invoice.token !== token) return json(400, { error: "Unexpected token" });
   const relayerId = env("RELAYER_ACCOUNT_ID");
   const relayer = new Account(relayerId, provider, KeyPairSigner.fromSecretKey(env("RELAYER_PRIVATE_KEY") as `ed25519:${string}`));
   try {
-    await relayer.callFunction({ contractId: token, methodName: "mint", args: { account_id: relayerId, amount: invoice.amount }, gas: 30n * TGAS, waitUntil: FAST });
+    await relayer.callFunction({ contractId: token, methodName: "mint", args: { account_id: relayerId, amount }, gas: 30n * TGAS, waitUntil: FAST });
     const outcome = await relayer.callFunctionRaw({
       contractId: token,
       methodName: "ft_transfer_call",
-      args: { receiver_id: contract, amount: invoice.amount, msg: JSON.stringify({ invoice_id: invoiceId, client_key: clientKey }) },
+      args: { receiver_id: contract, amount, msg: JSON.stringify({ invoice_id: invoiceId, client_key: clientKey }) },
       deposit: 1n,
       gas: 150n * TGAS,
       waitUntil: FAST,
@@ -142,7 +145,7 @@ async function demoPay(provider: JsonRpcProvider, contract: string, invoiceId: s
 // ---------------------------------------------------------------- gasless freelancer actions
 
 export const GASLESS_RECIPIENT = "PayPact";
-const GASLESS_ACTIONS = new Set(["create_invoice", "mark_delivered"]);
+const GASLESS_ACTIONS = new Set(["create_invoice", "create_project", "mark_delivered"]);
 const MAX_AGE_MS = 10 * 60_000;
 
 function relayerAccount(provider: JsonRpcProvider) {
@@ -192,7 +195,7 @@ async function gasless(provider: JsonRpcProvider, contract: string, body: any): 
 
   const relayer = relayerAccount(provider);
   try {
-    if (req.action === "create_invoice") {
+    if (req.action === "create_invoice" || req.action === "create_project") {
       // Make sure the freelancer can receive the stablecoin, so payouts never bounce.
       const token = String(req.args.token ?? "");
       if (token !== env("PAYPACT_TOKEN")) return json(400, { error: "Unsupported token" });
@@ -205,8 +208,8 @@ async function gasless(provider: JsonRpcProvider, contract: string, body: any): 
         });
       }
       const id = await relayer.callFunction({
-        contractId: contract, methodName: "create_invoice_for", args: { ...req.args, freelancer: accountId }, gas: 50n * TGAS,
-        waitUntil: FAST,
+        contractId: contract, methodName: `${req.action}_for`, args: { ...req.args, freelancer: accountId },
+        gas: (req.action === "create_project" ? 150n : 50n) * TGAS, waitUntil: FAST,
       });
       return json(200, { invoice_id: String(id) });
     }
@@ -237,10 +240,22 @@ const DEMO_JOBS = [
   { title: "Pitch deck redesign for Lumen Labs", amount: 300, upfront: 30 },
 ];
 
-/** A fresh invoice from the demo freelancer, so anyone can try the client side without a wallet. */
-async function demoCreate(provider: JsonRpcProvider, contract: string) {
+/** A fresh invoice (or a 4-milestone project) from the demo freelancer, so anyone can try the client side without a wallet. */
+async function demoCreate(provider: JsonRpcProvider, contract: string, project: boolean) {
   const job = DEMO_JOBS[Math.floor(Math.random() * DEMO_JOBS.length)];
   try {
+    if (project) {
+      // "4 Instagram posts in a month for $1,000": paid once, released $250 per post.
+      const id = await relayerAccount(provider).callFunction({
+        contractId: contract, methodName: "create_project_for", gas: 150n * TGAS, waitUntil: FAST,
+        args: {
+          freelancer: DEMO_FREELANCER, token: env("PAYPACT_TOKEN"), title: "Instagram posts for Bloom Café (1 month)",
+          milestones: [1, 2, 3, 4].map((i) => ({ title: `Post ${i} of 4`, amount: "250000000", due_in_days: 7 * i })),
+          review_days: 3, dispute_timeout_days: null, arbiter: null,
+        },
+      });
+      return json(200, { invoice_id: String(id) });
+    }
     const id = await relayerAccount(provider).callFunction({
       contractId: contract, methodName: "create_invoice_for", gas: 50n * TGAS, waitUntil: FAST,
       args: {
@@ -257,7 +272,7 @@ async function demoCreate(provider: JsonRpcProvider, contract: string) {
 /** The demo freelancer "delivers" (only for its own funded invoices), with proof attached. */
 async function demoDeliver(provider: JsonRpcProvider, contract: string, invoiceId: string, origin: string) {
   if (!/^\d{1,18}$/.test(invoiceId)) return json(400, { error: "Bad invoice id" });
-  const inv = await view<{ freelancer: string; status: string } | null>(provider, contract, "get_invoice", { invoice_id: invoiceId });
+  const inv = await view<{ freelancer: string; status: string; title: string; project: object | null } | null>(provider, contract, "get_invoice", { invoice_id: invoiceId });
   if (!inv || inv.freelancer !== DEMO_FREELANCER) return json(400, { error: "Not a demo invoice" });
   if (inv.status !== "Funded") return json(400, { error: "The invoice must be paid first" });
   const base = /^https:\/\/[a-z0-9.-]+$/i.test(origin) ? origin : "https://paypact-alpha.vercel.app";
@@ -267,7 +282,9 @@ async function demoDeliver(provider: JsonRpcProvider, contract: string, invoiceI
       args: {
         freelancer: DEMO_FREELANCER, invoice_id: invoiceId,
         link: `${base}/demo-delivery.html`,
-        note: "Final files attached: logo (SVG, PNG), colours and fonts. Thanks for the clear brief!",
+        note: inv.project
+          ? `${inv.title} is ready: image, caption and hashtags in the folder, scheduled for Tuesday 10am.`
+          : "Final files attached: logo (SVG, PNG), colours and fonts. Thanks for the clear brief!",
       },
     });
     return json(200, { ok: true });

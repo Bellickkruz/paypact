@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { config, displayName, isDemo } from "../lib/config";
 import { formatUsd, nsToDate } from "../lib/money";
-import { getInvoice, getProfile, heldAmount, type ClientAction, type Invoice, type Profile } from "../lib/near";
+import { getInvoice, getProfile, getProject, heldAmount, type ClientAction, type Invoice, type Profile } from "../lib/near";
 import { loadClientSecret, newClientSecret, paymentMsg, privateLink, publicKeyOf, saveClientSecret } from "../lib/clientKey";
 import { relay, sendClientAction } from "../lib/relay";
 import { PAY_OPTIONS, PREVIEW_OPTIONS, friendlyAmount, previewQuote, looksLikeAddress, quotePayment, swapStatus, type Quote, type SwapStatus } from "../lib/intents";
 import { callContract, ONE_YOCTO, signedRequest, useWallet } from "../lib/wallet";
 import { assistantCall, loadAssistantKey } from "../lib/assistant";
 import { downloadIcs, googleCalendarUrl, type CalendarEvent } from "../lib/calendar";
-import { Busy, CopyField, LangPicker, NudgeButtons, Qr, Rich, ShareButtons, Stars, StatusBadge, Timeline, TranslatableText, errText, shortDate, toast } from "../ui";
+import { Busy, CopyField, LangPicker, go, NudgeButtons, Qr, Rich, ShareButtons, Stars, StatusBadge, Timeline, TranslatableText, errText, shortDate, toast } from "../ui";
 import { locale, t, useLang } from "../lib/i18n";
 
 const DAY_MS = 86_400_000;
@@ -20,14 +20,22 @@ export function InvoicePage({ id }: { id: string }) {
   const [inv, setInv] = useState<Invoice | null | undefined>(undefined);
   const [profile, setProfile] = useState<[Profile, number] | null>(null);
   const [secret, setSecret] = useState<string | null>(() => loadClientSecret(id));
+  const [milestones, setMilestones] = useState<Invoice[] | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      setInv(await getInvoice(id));
+      const i = await getInvoice(id);
+      if (i?.project) setMilestones(await getProject(i.project.id));
+      setInv(i);
     } catch {
       /* keep the last state on a network blip */
     }
   }, [id]);
+
+  // A milestone's own link opens its project.
+  useEffect(() => {
+    if (inv?.project && inv.project.id !== inv.id) go(`/i/${inv.project.id}`);
+  }, [inv]);
 
   useEffect(() => {
     refresh();
@@ -45,6 +53,14 @@ export function InvoicePage({ id }: { id: string }) {
   const isFreelancer = accountId === inv.freelancer;
   const isClient = !!secret && !!inv.client_key && publicKeyOf(secret) === inv.client_key;
   const url = `${location.origin}${location.pathname}#/i/${id}`;
+
+  if (inv.project) {
+    if (!milestones || inv.project.id !== inv.id) return <main className="wrap"><div className="card center"><span className="spinner dark" /></div></main>;
+    return (
+      <ProjectView ms={milestones} profile={profile} isFreelancer={isFreelancer} isClient={isClient}
+        secret={secret} setSecret={setSecret} refresh={refresh} url={url} />
+    );
+  }
 
   return (
     <main className="wrap">
@@ -66,6 +82,177 @@ export function InvoicePage({ id }: { id: string }) {
         </div>
       )}
     </main>
+  );
+}
+
+// ---------------------------------------------------------------- projects (milestones)
+
+const SETTLED = ["Released", "Split", "Refunded"];
+
+function msDot(m: Invoice, i: number) {
+  if (m.status === "Released" || m.status === "Split") return "✓";
+  if (m.status === "Refunded") return "↩";
+  return String(i + 1);
+}
+
+/** A project: one payment for the whole job, released milestone by milestone. */
+function ProjectView({ ms, profile, isFreelancer, isClient, secret, setSecret, refresh, url }: {
+  ms: Invoice[]; profile: [Profile, number] | null; isFreelancer: boolean; isClient: boolean;
+  secret: string | null; setSecret: (s: string) => void; refresh: () => void; url: string;
+}) {
+  const first = ms[0];
+  const p = first.project!;
+  const last = ms[ms.length - 1];
+  // The whole project as one payable "invoice": paid once, to the first milestone.
+  const whole: Invoice = { ...first, amount: p.total, upfront: "0", title: p.title, due_at: last.due_at };
+  const awaiting = first.status === "AwaitingPayment";
+  const cancelled = first.status === "Cancelled";
+  const sum = (f: (m: Invoice) => boolean) => ms.filter(f).reduce((s, m) => s + BigInt(m.amount), 0n);
+  const paidOut = sum((m) => m.status === "Released" || m.status === "Split");
+  const refunded = sum((m) => m.status === "Refunded");
+  const locked = sum((m) => ["Funded", "Delivered", "Disputed"].includes(m.status));
+  const doneCount = ms.filter((m) => SETTLED.includes(m.status)).length;
+  const nowIndex = ms.findIndex((m) => !SETTLED.includes(m.status) && m.status !== "Cancelled");
+  const current = ms.find((m) => m.status === "Funded");
+  const [pr, avg] = profile ?? [null, 0];
+  const allDone = !awaiting && !cancelled && doneCount === ms.length;
+  // Project-wide client tools (control link, refund account) stay until every milestone is settled.
+  const wholeLive: Invoice = { ...whole, status: ms[nowIndex]?.status ?? first.status };
+
+  return (
+    <main className="wrap">
+      {isDemo(first.freelancer) && !isFreelancer && <ProjectDemoGuide ms={ms} isClient={isClient} refresh={refresh} />}
+      <div className="card">
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <span className="muted small">{t("Project #{id} · {n} milestones", { id: p.id, n: p.count })}</span>
+          <span className="row" style={{ gap: 8 }}>
+            <LangPicker />
+            {awaiting || cancelled ? <StatusBadge status={first.status} /> : (
+              <span className={`badge ${allDone ? "ok" : "lock"}`}>
+                {allDone ? t("✅ Completed") : t("🔒 {done} of {n} done", { done: doneCount, n: p.count })}
+              </span>
+            )}
+          </span>
+        </div>
+        <div className="amount">{formatUsd(p.total, { cents: true })}</div>
+        <h3><TranslatableText text={p.title} /></h3>
+        <p className="muted small" style={{ marginBottom: 6 }}>
+          {t("From")} <a href={`#/p/${first.freelancer}`}>{displayName(first.freelancer)}</a> · {t("paid once, released milestone by milestone")}
+        </p>
+        {pr && (
+          <a href={`#/p/${first.freelancer}`} className="small" style={{ textDecoration: "none" }}>
+            <Stars value={avg / 100} count={pr.rating_count} />{" "}
+            <span className="muted">· {pr.completed === 1 ? t("1 job completed") : t("{n} jobs completed", { n: pr.completed })}
+              {pr.delivered > 0 && ` · ${t("{pct}% on time", { pct: Math.round((pr.delivered_on_time / pr.delivered) * 100) })}`}</span>
+          </a>
+        )}
+        {!awaiting && !cancelled && (
+          <>
+            <div className="ms-progress"><span style={{ width: `${Number((paidOut * 100n) / BigInt(p.total))}%` }} /></div>
+            <p className="small" style={{ margin: 0 }}>
+              <Rich text={t("💸 **{paid}** paid out · 🔒 **{locked}** locked", { paid: formatUsd(paidOut, { cents: true }), locked: formatUsd(locked, { cents: true }) })} />
+              {refunded > 0n && <> · <Rich text={t("↩️ **{amount}** refunded", { amount: formatUsd(refunded, { cents: true }) })} /></>}
+            </p>
+          </>
+        )}
+
+        <div className="ms-list">
+          {ms.map((m, i) => (
+            <div key={m.id} className={`ms-item ${SETTLED.includes(m.status) ? "done" : ""} ${i === nowIndex && !awaiting ? "now" : ""}`}>
+              <div className="ms-dot">{msDot(m, i)}</div>
+              <div>
+                <div className="ms-head">
+                  <b><TranslatableText text={m.title} /></b>
+                  <b>{formatUsd(m.amount, { cents: true })}</b>
+                </div>
+                <div className="row small" style={{ gap: 8, marginTop: 2 }}>
+                  <span className="muted">{t("due {date}", { date: shortDate(nsToDate(m.due_at)) })}</span>
+                  {!awaiting && !cancelled && <StatusBadge status={m.status} />}
+                </div>
+                {(m.delivered_at || (!awaiting && !cancelled && (isClient || isFreelancer))) && (
+                  <div className="ms-body">
+                    {m.delivered_at && <DeliveryProof inv={m} compact={SETTLED.includes(m.status)} />}
+                    {isClient && !isFreelancer && <ClientPanel inv={m} secret={secret!} refresh={refresh} mode="milestone" />}
+                    {isFreelancer && <FreelancerPanel inv={m} url={url} refresh={refresh} mode="milestone" current={m.id === current?.id} />}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+        {!awaiting && !cancelled && (
+          <div className="row" style={{ marginTop: 4 }}>
+            <a className="btn small ghost" href={`#/r/${p.id}`}>{t("🧾 Receipt (PDF)")}</a>
+          </div>
+        )}
+      </div>
+
+      {isFreelancer && awaiting && <FreelancerPanel inv={whole} url={url} refresh={refresh} />}
+      {isFreelancer && allDone && (
+        <div className="card green stack center">
+          <div className="celebrate">🎉</div>
+          <h3>Project complete: {formatUsd(paidOut, { cents: true })} paid to you</h3>
+          <ShareButtons text={`Just finished "${p.title}" with PayPact on @NEARProtocol: ${p.count} milestones, paid once by the client and released as each one was approved. ✅`} url={url} />
+          <a className="btn ghost" href={`#/p/${first.freelancer}`}>See my profile</a>
+        </div>
+      )}
+      {!isFreelancer && awaiting && <PayPanel inv={whole} secret={secret} onSecret={setSecret} refresh={refresh} />}
+      {!isFreelancer && isClient && !allDone && <ClientPanel inv={wholeLive} secret={secret!} refresh={refresh} mode="project" />}
+      {!isFreelancer && !isClient && !awaiting && (
+        <div className="card soft center muted small">
+          {t("Paid this invoice on another device? Open the private link you saved when you paid.")}
+        </div>
+      )}
+    </main>
+  );
+}
+
+/** The "Try it now" guide for the 4-post demo project. */
+function ProjectDemoGuide({ ms, isClient, refresh }: { ms: Invoice[]; isClient: boolean; refresh: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const n = ms.length;
+  const delivered = ms.findIndex((m) => m.status === "Delivered");
+  const funded = ms.findIndex((m) => m.status === "Funded");
+  const last = ms[n - 1];
+  let text: string;
+  let deliverIndex = -1;
+  if (ms[0].status === "AwaitingPayment") text = t("You're the client. Demo Designer will make {n} posts this month for {total}. Pay once below: each post's share is released only when you approve that post.", { n, total: formatUsd(ms[0].project!.total) });
+  else if (delivered >= 0) text = t("{title} is delivered. Check it, then tap Approve & release below. Only this milestone's share is paid.", { title: ms[delivered].title });
+  else if (funded >= 0) { text = t("All the money is locked. Let Demo Designer deliver {title}:", { title: ms[funded].title }); deliverIndex = funded; }
+  else if ((last.status === "Released" || last.status === "Split") && !last.rating) text = t("Every milestone is paid out. Rate Demo Designer below.");
+  else text = t("That's milestones: one payment, released piece by piece. Now try it for real.");
+  const deliver = async () => {
+    setBusy(true);
+    try {
+      await relay({ method: "demo_deliver", invoice_id: ms[deliverIndex].id });
+      toast(t("Demo Designer delivered the work"));
+      refresh();
+      setTimeout(refresh, 2500);
+    } catch (e) {
+      toast(`${t("Didn't go through:")} ${errText(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="card demo-guide stack">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <b>{t("▶ Demo · project with {n} milestones", { n })}</b>
+        <span className="muted small">{t("testnet, no real money")}</span>
+      </div>
+      <p style={{ margin: 0 }}>{text}</p>
+      {deliverIndex >= 0 && isClient && (
+        <button className="btn gold" disabled={busy} onClick={deliver}>
+          <Busy busy={busy}>{t("Demo Designer delivers {title}", { title: ms[deliverIndex].title })}</Busy>
+        </button>
+      )}
+      {last.rating && (
+        <div className="row">
+          <a className="btn" href="#/new">{t("Create my own invoice")}</a>
+          <a className="btn ghost" href={`#/p/${ms[0].freelancer}`}>{t("See Demo Designer's profile")}</a>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -130,9 +317,17 @@ function PaymentSplit({ inv }: { inv: Invoice }) {
 }
 
 /** What was delivered and when, as recorded on-chain: the record a dispute is judged against. */
-function DeliveryProof({ inv }: { inv: Invoice }) {
+function DeliveryProof({ inv, compact = false }: { inv: Invoice; compact?: boolean }) {
   const when = nsToDate(inv.delivered_at!);
   const onTime = BigInt(inv.delivered_at!) <= BigInt(inv.due_at);
+  if (compact) {
+    return (
+      <p className="small muted" style={{ margin: 0 }}>
+        📦 {t("Delivered {date}", { date: shortDate(when) })} · {onTime ? t("On time") : t("Late")}
+        {inv.delivery?.link && <> · <a href={inv.delivery.link} target="_blank" rel="noreferrer noopener">{t("View the delivered work ↗")}</a></>}
+      </p>
+    );
+  }
   return (
     <div className="proof">
       <div className="row" style={{ justifyContent: "space-between" }}>
@@ -213,7 +408,9 @@ function ProtectionNote({ inv }: { inv: Invoice }) {
     <div className="protect">
       <span className="icon">🔒</span>
       <div>
-        {up === BigInt(inv.amount) ? (
+        {inv.project ? (
+          <Rich text={t("**{amount} is held safely** by a smart contract. Each milestone's share is released only when you approve that milestone, and refunded to you if it isn't delivered by its due date. Not even PayPact can touch it.", { amount: formatUsd(inv.amount, { cents: true }) })} />
+        ) : up === BigInt(inv.amount) ? (
           <Rich text={t("This is a **direct payment**: it goes straight to {name}, as you agreed.", { name: displayName(inv.freelancer) })} />
         ) : (
           <>
@@ -454,7 +651,15 @@ function CalendarButtons({ event }: { event: CalendarEvent }) {
   );
 }
 
-function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; refresh: () => void }) {
+/**
+ * "full": a single invoice. "milestone": one milestone inside a project (no control link,
+ * refund account or long paid card; rated only on the last milestone). "project": the
+ * project-wide parts (control link, refund account) shown once.
+ */
+type PanelMode = "full" | "milestone" | "project";
+
+function ClientPanel({ inv, secret, refresh, mode = "full" }: { inv: Invoice; secret: string; refresh: () => void; mode?: PanelMode }) {
+  const isLast = !inv.project || inv.project.index + 1 === inv.project.count;
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [reason, setReason] = useState("");
@@ -485,8 +690,18 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
   return (
     <>
       {error && <div className="card red small"><b>{t("Didn't go through:")}</b> {error}</div>}
-      {!FINAL.includes(inv.status) && <SaveControlLink inv={inv} secret={secret} />}
-      {inv.status === "Funded" && (
+      {mode !== "milestone" && !FINAL.includes(inv.status) && <SaveControlLink inv={inv} secret={secret} />}
+      {mode === "milestone" && inv.status === "Funded" && (
+        <div className="small muted stack" style={{ gap: 6 }}>
+          <span>{t("🔒 Locked. Due {date}.", { date: shortDate(nsToDate(inv.due_at)) })}</span>
+          {Date.now() > nsToDate(inv.due_at).getTime() + 2 * DAY_MS && (
+            <button className="btn small danger" disabled={!!busy} onClick={() => act("refund", { type: "refund_undelivered" }, "Refund on its way")}>
+              {t("Not delivered: refund this milestone")}
+            </button>
+          )}
+        </div>
+      )}
+      {mode === "full" && inv.status === "Funded" && (
         <div className="card stack">
           <h3>{t("Thanks, you've paid 🔒")}</h3>
           <p className="muted">
@@ -506,7 +721,7 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
         </div>
       )}
 
-      {inv.status === "Delivered" && (
+      {mode !== "project" && inv.status === "Delivered" && (
         <div className="card stack">
           <h3>{t("📦 The work has been delivered")}</h3>
           <p className="muted">
@@ -530,7 +745,7 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
         </div>
       )}
 
-      {inv.status === "Disputed" && (
+      {mode !== "project" && inv.status === "Disputed" && (
         <div className="card red stack">
           <h3>{t("⚠️ Payment frozen")}</h3>
           <p className="small">{t("You reported: \"{reason}\"", { reason: inv.dispute_reason ?? "" })}</p>
@@ -556,7 +771,7 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
         </div>
       )}
 
-      {(inv.status === "Released" || inv.status === "Split") && !inv.rating && (
+      {mode !== "project" && isLast && (inv.status === "Released" || inv.status === "Split") && !inv.rating && (
         <div className="card stack">
           <h3>{t("How was working with {name}?", { name: displayName(inv.freelancer) })}</h3>
           <div className="starpick">
@@ -571,11 +786,11 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
           <p className="hint">{t("Only clients who actually paid can rate, once. Ratings can't be edited or deleted by anyone.")}</p>
         </div>
       )}
-      {(inv.status === "Released" || inv.status === "Split") && inv.rating && (
+      {mode !== "project" && isLast && (inv.status === "Released" || inv.status === "Split") && inv.rating && (
         <div className="card green center">{t("Thanks for paying with PayPact. You rated {name}", { name: displayName(inv.freelancer) })} <Stars value={inv.rating.stars} /></div>
       )}
 
-      {!FINAL.includes(inv.status) && !inv.client_refund_to && (
+      {mode !== "milestone" && !FINAL.includes(inv.status) && !inv.client_refund_to && (
         <details className="card soft">
           <summary>{t("Add a NEAR account for refunds (recommended)")}</summary>
           <div className="row" style={{ marginTop: 10 }}>
@@ -659,7 +874,9 @@ function nextStageUrl(inv: Invoice) {
   return `#/new?${q}`;
 }
 
-function FreelancerPanel({ inv, url, refresh }: { inv: Invoice; url: string; refresh: () => void }) {
+function FreelancerPanel({ inv, url, refresh, mode = "full", current = true }: {
+  inv: Invoice; url: string; refresh: () => void; mode?: "full" | "milestone"; current?: boolean;
+}) {
   const { accountId } = useWallet();
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -700,7 +917,13 @@ function FreelancerPanel({ inv, url, refresh }: { inv: Invoice; url: string; ref
 
   return (
     <div className="stack">
-      {inv.status === "AwaitingPayment" && (
+      {mode === "milestone" && inv.status === "Funded" && !current && (
+        <p className="small muted" style={{ margin: 0 }}>🔒 {formatUsd(held, { cents: true })} locked for you · deliver by {shortDate(nsToDate(inv.due_at))}</p>
+      )}
+      {mode === "milestone" && (inv.status === "Released" || inv.status === "Split") && (
+        <p className="small" style={{ margin: 0 }}>✅ Paid to you{inv.rating && <> · rated <Stars value={inv.rating.stars} /></>}</p>
+      )}
+      {mode === "full" && inv.status === "AwaitingPayment" && (
         <div className="card stack">
           <h3>Send it to your client</h3>
           <ShareButtons text={shareText} url={url} />
@@ -709,7 +932,7 @@ function FreelancerPanel({ inv, url, refresh }: { inv: Invoice; url: string; ref
         </div>
       )}
 
-      {inv.status === "Funded" && (
+      {inv.status === "Funded" && current && (
         <div className="card green stack">
           <h3>🔒 {formatUsd(held, { cents: true })} is locked for you</h3>
           <p>
@@ -768,7 +991,7 @@ function FreelancerPanel({ inv, url, refresh }: { inv: Invoice; url: string; ref
         </div>
       )}
 
-      {(inv.status === "Released" || inv.status === "Split") && (
+      {mode === "full" && (inv.status === "Released" || inv.status === "Split") && (
         <div className="card green stack center">
           <div className="celebrate">🎉</div>
           <h3>You've been paid</h3>
