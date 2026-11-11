@@ -168,6 +168,9 @@ pub struct Contract {
     owner: AccountId,
     /// Days after `due_at` before an undelivered invoice can be refunded.
     grace_days: u32,
+    /// Pays network fees so freelancers need no NEAR: it may create invoices and
+    /// mark work delivered for a freelancer who signed the request, never move money.
+    relayer: Option<AccountId>,
 }
 
 #[near]
@@ -181,6 +184,7 @@ impl Contract {
             allowed_tokens,
             owner,
             grace_days: 2,
+            relayer: None,
         }
     }
 
@@ -200,76 +204,52 @@ impl Contract {
         arbiter: Option<AccountId>,
         upfront_percent: Option<u8>,
     ) -> U64 {
-        require!(self.allowed_tokens.contains(&token), "Token not supported");
-        require!(amount.0 > 0, "Amount must be positive");
-        require!(!title.trim().is_empty() && title.len() <= 140, "Title must be 1-140 characters");
-        require!(due_in_days >= 1 && due_in_days <= MAX_DAYS, "Due date must be 1-365 days out");
-        let review_days = review_days.unwrap_or(5);
-        let dispute_timeout_days = dispute_timeout_days.unwrap_or(30);
-        require!(review_days >= 1 && review_days <= 60, "Review window must be 1-60 days");
-        require!(
-            dispute_timeout_days >= 7 && dispute_timeout_days <= MAX_DAYS,
-            "Dispute timeout must be 7-365 days"
-        );
-        let upfront_percent = upfront_percent.unwrap_or(0);
-        require!(upfront_percent <= 100, "Upfront must be 0-100%");
-        let upfront = amount.0 * upfront_percent as u128 / 100;
         let freelancer = env::predecessor_account_id();
-        if let Some(a) = &arbiter {
-            require!(*a != freelancer, "Arbiter cannot be the freelancer");
-        }
-        let now = env::block_timestamp();
-        let id = self.next_id;
-        self.next_id += 1;
-        self.invoices.insert(
-            id,
-            Invoice {
-                id: U64(id),
-                freelancer,
-                token,
-                amount,
-                upfront: U128(upfront),
-                title: title.trim().to_string(),
-                created_at: U64(now),
-                due_at: U64(now + due_in_days as u64 * NS_PER_DAY),
-                review_days,
-                dispute_timeout_days,
-                arbiter,
-                status: Status::AwaitingPayment,
-                client_key: None,
-                client_refund_to: None,
-                funded_at: None,
-                delivered_at: None,
-                disputed_at: None,
-                dispute_reason: None,
-                proposal: None,
-                client_nonce: 0,
-                owed_freelancer: U128(0),
-                owed_client: U128(0),
-                rating: None,
-            },
-        );
-        env::log_str(&format!("invoice_created id={id}"));
-        U64(id)
+        self.internal_create(freelancer, token, amount, title, due_in_days, review_days, dispute_timeout_days, arbiter, upfront_percent)
+    }
+
+    /// Gasless invoice creation: the relayer submits it for a freelancer whose
+    /// signed request it has verified, and pays the network fee.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_invoice_for(
+        &mut self,
+        freelancer: AccountId,
+        token: AccountId,
+        amount: U128,
+        title: String,
+        due_in_days: u32,
+        review_days: Option<u32>,
+        dispute_timeout_days: Option<u32>,
+        arbiter: Option<AccountId>,
+        upfront_percent: Option<u8>,
+    ) -> U64 {
+        self.assert_relayer();
+        self.internal_create(freelancer, token, amount, title, due_in_days, review_days, dispute_timeout_days, arbiter, upfront_percent)
+    }
+
+    /// Gasless "work delivered", submitted by the relayer for the freelancer.
+    pub fn mark_delivered_for(&mut self, freelancer: AccountId, invoice_id: U64) {
+        self.assert_relayer();
+        self.internal_mark_delivered(&freelancer, invoice_id);
+    }
+
+    /// Owner sets the relayer account (or removes it with None).
+    #[payable]
+    pub fn set_relayer(&mut self, relayer: Option<AccountId>) {
+        assert_one_yocto();
+        require!(env::predecessor_account_id() == self.owner, "Only the owner");
+        self.relayer = relayer;
+    }
+
+    pub fn get_relayer(&self) -> Option<AccountId> {
+        self.relayer.clone()
     }
 
     /// Mark the work delivered; starts the client's review window.
     /// Callable with a function-call key.
     pub fn mark_delivered(&mut self, invoice_id: U64) {
-        let mut inv = self.get_mut(invoice_id);
-        require!(env::predecessor_account_id() == inv.freelancer, "Only the freelancer");
-        require!(inv.status == Status::Funded, "Invoice is not funded");
-        let now = env::block_timestamp();
-        inv.status = Status::Delivered;
-        inv.delivered_at = Some(U64(now));
-        let on_time = now <= inv.due_at.0;
-        self.update_profile(&inv.freelancer, |p| {
-            p.delivered += 1;
-            if on_time {
-                p.delivered_on_time += 1;
-            }
-        });
-        self.save(inv);
+        let freelancer = env::predecessor_account_id();
+        self.internal_mark_delivered(&freelancer, invoice_id);
     }
 
     /// Withdraw an unpaid invoice. Requires 1 yoctoNEAR (full-access key).
@@ -577,6 +557,95 @@ impl Contract {
 }
 
 impl Contract {
+    #[allow(clippy::too_many_arguments)]
+    fn internal_create(
+        &mut self,
+        freelancer: AccountId,
+        token: AccountId,
+        amount: U128,
+        title: String,
+        due_in_days: u32,
+        review_days: Option<u32>,
+        dispute_timeout_days: Option<u32>,
+        arbiter: Option<AccountId>,
+        upfront_percent: Option<u8>,
+    ) -> U64 {
+        require!(self.allowed_tokens.contains(&token), "Token not supported");
+        require!(amount.0 > 0, "Amount must be positive");
+        require!(!title.trim().is_empty() && title.len() <= 140, "Title must be 1-140 characters");
+        require!(due_in_days >= 1 && due_in_days <= MAX_DAYS, "Due date must be 1-365 days out");
+        let review_days = review_days.unwrap_or(5);
+        let dispute_timeout_days = dispute_timeout_days.unwrap_or(30);
+        require!(review_days >= 1 && review_days <= 60, "Review window must be 1-60 days");
+        require!(
+            dispute_timeout_days >= 7 && dispute_timeout_days <= MAX_DAYS,
+            "Dispute timeout must be 7-365 days"
+        );
+        let upfront_percent = upfront_percent.unwrap_or(0);
+        require!(upfront_percent <= 100, "Upfront must be 0-100%");
+        let upfront = amount.0 * upfront_percent as u128 / 100;
+        if let Some(a) = &arbiter {
+            require!(*a != freelancer, "Arbiter cannot be the freelancer");
+        }
+        let now = env::block_timestamp();
+        let id = self.next_id;
+        self.next_id += 1;
+        self.invoices.insert(
+            id,
+            Invoice {
+                id: U64(id),
+                freelancer,
+                token,
+                amount,
+                upfront: U128(upfront),
+                title: title.trim().to_string(),
+                created_at: U64(now),
+                due_at: U64(now + due_in_days as u64 * NS_PER_DAY),
+                review_days,
+                dispute_timeout_days,
+                arbiter,
+                status: Status::AwaitingPayment,
+                client_key: None,
+                client_refund_to: None,
+                funded_at: None,
+                delivered_at: None,
+                disputed_at: None,
+                dispute_reason: None,
+                proposal: None,
+                client_nonce: 0,
+                owed_freelancer: U128(0),
+                owed_client: U128(0),
+                rating: None,
+            },
+        );
+        env::log_str(&format!("invoice_created id={id}"));
+        U64(id)
+    }
+
+    fn internal_mark_delivered(&mut self, freelancer: &AccountId, invoice_id: U64) {
+        let mut inv = self.get_mut(invoice_id);
+        require!(*freelancer == inv.freelancer, "Only the freelancer");
+        require!(inv.status == Status::Funded, "Invoice is not funded");
+        let now = env::block_timestamp();
+        inv.status = Status::Delivered;
+        inv.delivered_at = Some(U64(now));
+        let on_time = now <= inv.due_at.0;
+        self.update_profile(&inv.freelancer, |p| {
+            p.delivered += 1;
+            if on_time {
+                p.delivered_on_time += 1;
+            }
+        });
+        self.save(inv);
+    }
+
+    fn assert_relayer(&self) {
+        require!(
+            self.relayer.is_some() && self.relayer.as_ref() == Some(&env::predecessor_account_id()),
+            "Only the PayPact relayer"
+        );
+    }
+
     fn get_mut(&self, invoice_id: U64) -> Invoice {
         self.invoices
             .get(&invoice_id.0)

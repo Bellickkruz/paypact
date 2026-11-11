@@ -5,7 +5,7 @@ const network: Network = import.meta.env.VITE_NETWORK === "mainnet" ? "mainnet" 
 
 const defaults = {
   testnet: {
-    contract: "escrowwer0a.paypact-dev-mwaweex6.testnet",
+    contract: "paypact.paypact-dev-mwaweex6.testnet",
     token: "tusdcwer0a.paypact-dev-mwaweex6.testnet",
     symbol: "tUSDC",
     rpc: "https://rpc.testnet.near.org",

@@ -17,7 +17,7 @@ export function Home() {
         </p>
         <div className="row">
           <button className="btn big gold" onClick={start}>Create a free invoice</button>
-          <span className="muted small">No fees from PayPact. No account for your client.</span>
+          <span className="muted small">Free to send. You don't need any crypto to start, and your client needs no account.</span>
         </div>
       </section>
 

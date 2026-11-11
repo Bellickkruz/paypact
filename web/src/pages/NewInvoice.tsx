@@ -2,7 +2,7 @@ import { useState } from "react";
 import { config } from "../lib/config";
 import { formatUsd, toUnits } from "../lib/money";
 import { parseInvoice } from "../lib/parseInvoice";
-import { callContract, useWallet } from "../lib/wallet";
+import { signedRequest, useWallet } from "../lib/wallet";
 import { assistantCall, enableAssistant, loadAssistantKey } from "../lib/assistant";
 import { Busy, CopyField, Qr, ShareButtons, errText, toast } from "../ui";
 
@@ -32,7 +32,7 @@ export function NewInvoice() {
       <main className="wrap">
         <div className="card center stack">
           <h2>Sign in to create invoices</h2>
-          <p className="muted">Use any NEAR wallet: HOT, Meteor, MyNearWallet, Intear and more. Your client won't need one.</p>
+          <p className="muted">Use any NEAR wallet: HOT, Meteor, MyNearWallet, Intear and more. It's free: you don't need any crypto to send invoices, and your client won't need a wallet.</p>
           <button className="btn big" onClick={() => connect()}>Connect wallet</button>
         </div>
       </main>
@@ -71,7 +71,8 @@ export function NewInvoice() {
       if (assistantOn && loadAssistantKey(accountId)) {
         id = await assistantCall(accountId, "create_invoice", args);
       } else {
-        id = (await callContract("create_invoice", args, { gas: 50_000_000_000_000n })).value;
+        // Free for the freelancer: sign a message, PayPact pays the network fee.
+        id = (await signedRequest("create_invoice", args)).invoice_id;
       }
       if (!id) throw new Error("The invoice was created, but its number didn't come back. Check My invoices.");
       setCreated(String(id));
@@ -195,7 +196,7 @@ export function NewInvoice() {
             }}
           />
           <span>
-            <b>Let my assistant send invoices without wallet pop-ups.</b>{" "}
+            <b>Let my assistant send invoices without any wallet pop-ups.</b>{" "}
             <span className="muted">It gets a key that can only create invoices and mark work delivered. NEAR refuses anything that moves money.</span>
           </span>
         </label>
@@ -205,6 +206,7 @@ export function NewInvoice() {
       <button className="btn big block" disabled={!valid || busy} onClick={submit}>
         <Busy busy={busy}>Create invoice{units ? ` for ${formatUsd(units, { cents: true })}` : ""}</Busy>
       </button>
+      <p className="hint center" style={{ marginTop: 8 }}>Free. Your wallet just asks you to confirm; PayPact pays the network fee.</p>
     </main>
   );
 }

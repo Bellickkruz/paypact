@@ -81,6 +81,31 @@ export async function callContract(
   return { hash: (outcome as { transaction: { hash: string } }).transaction.hash, value };
 }
 
+/**
+ * Gasless freelancer actions: the wallet signs a free message (NEP-413, no
+ * transaction, no fee) and the PayPact relayer submits it and pays the fee.
+ */
+export async function signedRequest(action: "create_invoice" | "mark_delivered", args: object): Promise<Record<string, string>> {
+  const wallet = await getConnector().wallet();
+  const message = JSON.stringify({ app: "PayPact", contract: config.contract, action, args, issued_at: Date.now() });
+  const nonce = crypto.getRandomValues(new Uint8Array(32));
+  const signed = await wallet.signMessage({ message, recipient: "PayPact", nonce });
+  if (!signed) throw new Error("The wallet didn't return a signature");
+  const res = await fetch("/api/relay", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      method: "gasless",
+      message,
+      nonce: btoa(String.fromCharCode(...nonce)),
+      signed: { accountId: signed.accountId, publicKey: signed.publicKey, signature: signed.signature },
+    }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error ?? `Request failed (${res.status})`);
+  return json;
+}
+
 /** Add a limited key for the assistant: it can only call these methods and can never attach a deposit. */
 export async function addAssistantKey(publicKey: string, methodNames: string[]): Promise<void> {
   const wallet = await getConnector().wallet();

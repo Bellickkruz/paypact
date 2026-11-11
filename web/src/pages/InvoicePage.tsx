@@ -5,7 +5,7 @@ import { getInvoice, getProfile, heldAmount, type ClientAction, type Invoice, ty
 import { loadClientSecret, newClientSecret, paymentMsg, privateLink, publicKeyOf, saveClientSecret } from "../lib/clientKey";
 import { relay, sendClientAction } from "../lib/relay";
 import { PAY_OPTIONS, looksLikeAddress, quotePayment, swapStatus, type Quote, type SwapStatus } from "../lib/intents";
-import { callContract, ONE_YOCTO, useWallet } from "../lib/wallet";
+import { callContract, ONE_YOCTO, signedRequest, useWallet } from "../lib/wallet";
 import { assistantCall, loadAssistantKey } from "../lib/assistant";
 import { downloadIcs, googleCalendarUrl, type CalendarEvent } from "../lib/calendar";
 import { Busy, CopyField, NudgeButtons, Qr, ShareButtons, Stars, StatusBadge, Timeline, errText, shortDate, toast } from "../ui";
@@ -469,7 +469,7 @@ function FreelancerPanel({ inv, url, refresh }: { inv: Invoice; url: string; ref
   const markDelivered = () =>
     accountId && loadAssistantKey(accountId)
       ? assistantCall(accountId, "mark_delivered", { invoice_id: inv.id })
-      : callContract("mark_delivered", { invoice_id: inv.id }, { gas: 30_000_000_000_000n });
+      : signedRequest("mark_delivered", { invoice_id: inv.id });
 
   const shareText = `Hi, here's my invoice for ${inv.title}: ${formatUsd(inv.amount, { cents: true })}. You can pay with any crypto you have, and your payment is held safely until you approve the work:`;
   const nudge = `Hi! A friendly reminder from PayPact: the invoice for "${inv.title}" (${formatUsd(inv.amount, { cents: true })}) is ready whenever you are. Your payment stays protected until you approve the work.`;

@@ -378,3 +378,64 @@ fn late_delivery_and_disputes_show_in_profile() {
     let (p, _) = c.get_profile(acc("tolu.near"));
     assert_eq!((p.delivered, p.delivered_on_time, p.disputed), (1, 0, 1));
 }
+
+// --- gasless: the relayer submits for a freelancer --------------------------
+
+fn with_relayer() -> Contract {
+    set_ctx("owner.near", 0, 0);
+    let mut c = Contract::new(acc("owner.near"), vec![acc(USDC)]);
+    set_ctx("owner.near", 1, 0);
+    c.set_relayer(Some(acc("relayer.near")));
+    c
+}
+
+#[test]
+fn relayer_creates_and_delivers_for_freelancer() {
+    let mut c = with_relayer();
+    set_ctx("relayer.near", 0, 0);
+    let id = c.create_invoice_for(acc("tolu.near"), acc(USDC), U128(AMOUNT), "Logo".into(), 7, None, None, None, None).0;
+    assert_eq!(c.get_invoice(U64(id)).unwrap().freelancer, acc("tolu.near"));
+    pay(&mut c, id, &Client::new(), AMOUNT, None);
+    set_ctx("relayer.near", 0, 2 * DAY);
+    c.mark_delivered_for(acc("tolu.near"), U64(id));
+    assert_eq!(status(&c, id), Status::Delivered);
+}
+
+#[test]
+#[should_panic(expected = "Only the PayPact relayer")]
+fn strangers_cannot_create_for_others() {
+    let mut c = with_relayer();
+    set_ctx("mallory.near", 0, 0);
+    c.create_invoice_for(acc("tolu.near"), acc(USDC), U128(AMOUNT), "Fake".into(), 7, None, None, None, None);
+}
+
+#[test]
+#[should_panic(expected = "Only the freelancer")]
+fn relayer_cannot_deliver_for_the_wrong_freelancer() {
+    let mut c = with_relayer();
+    set_ctx("relayer.near", 0, 0);
+    let id = c.create_invoice_for(acc("tolu.near"), acc(USDC), U128(AMOUNT), "Logo".into(), 7, None, None, None, None).0;
+    pay(&mut c, id, &Client::new(), AMOUNT, None);
+    set_ctx("relayer.near", 0, 2 * DAY);
+    c.mark_delivered_for(acc("mallory.near"), U64(id));
+}
+
+#[test]
+#[should_panic(expected = "Only the PayPact relayer")]
+fn no_relayer_means_no_gasless_calls() {
+    set_ctx("owner.near", 0, 0);
+    let mut c = Contract::new(acc("owner.near"), vec![acc(USDC)]);
+    set_ctx("relayer.near", 0, 0);
+    c.create_invoice_for(acc("tolu.near"), acc(USDC), U128(AMOUNT), "Logo".into(), 7, None, None, None, None);
+}
+
+#[test]
+#[should_panic(expected = "Only the freelancer")]
+fn relayer_cannot_move_money() {
+    let mut c = with_relayer();
+    set_ctx("relayer.near", 0, 0);
+    let id = c.create_invoice_for(acc("tolu.near"), acc(USDC), U128(AMOUNT), "Logo".into(), 7, None, None, None, None).0;
+    pay(&mut c, id, &Client::new(), AMOUNT, Some("sarah.near"));
+    set_ctx("relayer.near", 1, 2 * DAY);
+    let _ = c.refund_client(U64(id));
+}
