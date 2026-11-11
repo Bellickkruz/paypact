@@ -10,7 +10,7 @@
 import { Account, JsonRpcProvider, KeyPairSigner } from "near-api-js";
 import { ed25519 } from "@noble/curves/ed25519";
 import bs58 from "bs58";
-import { verifyNep413 } from "./_nep413";
+import { verifyNep413 } from "./_nep413.js";
 
 const TGAS = 1_000_000_000_000n;
 const ACTIONS = new Set(["approve", "dispute", "propose_split", "accept_split", "refund_undelivered", "set_refund_account", "rate"]);
