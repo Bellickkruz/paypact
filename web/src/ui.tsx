@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import QRCode from "qrcode";
 import { config } from "./lib/config";
 import type { Invoice, Status } from "./lib/near";
+import { formatUsd } from "./lib/money";
 import { useWallet } from "./lib/wallet";
 
 export const go = (path: string) => {
@@ -84,7 +85,7 @@ export function Timeline({ inv }: { inv: Invoice }) {
   const done = ["Released", "Split", "Refunded"].includes(s);
   const steps = [
     { label: "Invoice sent", done: true },
-    { label: "Paid & locked", done: paid },
+    { label: "Paid & locked", done: paid, sub: paid && BigInt(inv.upfront) > 0n ? `${formatUsd(inv.upfront)} sent up front` : "" },
     { label: "Work delivered", done: delivered || (done && s === "Released") },
     { label: s === "Refunded" ? "Refunded" : "Paid out", done },
   ];
@@ -95,6 +96,7 @@ export function Timeline({ inv }: { inv: Invoice }) {
         <div key={st.label} className={`step ${st.done ? "done" : ""} ${i === nowIndex ? "now" : ""}`}>
           <div className="dot">{st.done ? "✓" : ""}</div>
           {st.label}
+          {st.sub && <div className="step-sub">{st.sub}</div>}
         </div>
       ))}
     </div>

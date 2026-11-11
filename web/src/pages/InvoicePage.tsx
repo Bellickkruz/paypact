@@ -81,8 +81,8 @@ function InvoiceSummary({ inv, profile }: { inv: Invoice; profile: [Profile, num
       <h3>{inv.title}</h3>
       <p className="muted small" style={{ marginBottom: 6 }}>
         From <a href={`#/p/${inv.freelancer}`}>{displayName(inv.freelancer)}</a> · due {shortDate(nsToDate(inv.due_at))}
-        {BigInt(inv.upfront) > 0n && ` · ${formatUsd(inv.upfront, { cents: true })} up front`}
       </p>
+      <PaymentSplit inv={inv} />
       {p && (
         <a href={`#/p/${inv.freelancer}`} className="small" style={{ textDecoration: "none" }}>
           <Stars value={avg / 100} count={p.rating_count} />{" "}
@@ -92,6 +92,27 @@ function InvoiceSummary({ inv, profile }: { inv: Invoice; profile: [Profile, num
       )}
       <Timeline inv={inv} />
       {inv.delivered_at && <DeliveryProof inv={inv} />}
+    </div>
+  );
+}
+
+/** Up front vs held, stated plainly next to the total so nobody is surprised after paying. */
+function PaymentSplit({ inv }: { inv: Invoice }) {
+  const up = BigInt(inv.upfront);
+  if (up === 0n) return null;
+  const paid = inv.status !== "AwaitingPayment" && inv.status !== "Cancelled";
+  const upText = formatUsd(inv.upfront, { cents: true });
+  if (up === BigInt(inv.amount)) {
+    return (
+      <div className="split-box">
+        <div>💸 <b>Direct payment:</b> the full {upText} {paid ? "went" : "goes"} straight to the freelancer, as agreed. It is not held in escrow.</div>
+      </div>
+    );
+  }
+  return (
+    <div className="split-box">
+      <div>💸 <b>{upText}</b> {paid ? "paid to the freelancer immediately" : "goes to the freelancer immediately"} <span className="muted">(agreed up front)</span></div>
+      <div>🔒 <b>{formatUsd(heldAmount(inv), { cents: true })}</b> held safely until you approve the work</div>
     </div>
   );
 }
