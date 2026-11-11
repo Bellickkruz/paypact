@@ -6,7 +6,9 @@
 // Freelancers need no NEAR either: they sign a free NEP-413 message in their wallet,
 // and the relayer submits create_invoice_for / mark_delivered_for and pays the fee.
 //
-// Env: NETWORK (testnet|mainnet), PAYPACT_CONTRACT, PAYPACT_TOKEN, RELAYER_ACCOUNT_ID, RELAYER_PRIVATE_KEY
+// Env: NETWORK (testnet|mainnet), PAYPACT_CONTRACT (mainnet), PAYPACT_TOKEN, RELAYER_ACCOUNT_ID, RELAYER_PRIVATE_KEY
+// On testnet the contract address comes from the code (TESTNET_CONTRACT below), so a
+// redeploy needs no settings change; PAYPACT_CONTRACT_OVERRIDE can still replace it.
 import { Account, JsonRpcProvider, KeyPairSigner } from "near-api-js";
 import { ed25519 } from "@noble/curves/ed25519";
 import bs58 from "bs58";
@@ -15,6 +17,15 @@ import { verifyNep413 } from "./_nep413.js";
 const TGAS = 1_000_000_000_000n;
 const ACTIONS = new Set(["approve", "dispute", "propose_split", "accept_split", "refund_undelivered", "set_refund_account", "rate"]);
 const OPEN_METHODS = new Set(["release_after_review", "resolve_stale_dispute", "retry_payout"]);
+
+export const TESTNET_CONTRACT = "pact.paypact-dev-mwaweex6.testnet";
+/** The ready-made freelancer behind the "Try it now" demo (testnet only). */
+export const DEMO_FREELANCER = "demo-designer.paypact-dev-mwaweex6.testnet";
+
+function contractId() {
+  if (process.env.NETWORK === "mainnet") return env("PAYPACT_CONTRACT");
+  return process.env.PAYPACT_CONTRACT_OVERRIDE || TESTNET_CONTRACT;
+}
 
 const env = (k: string) => {
   const v = process.env[k];
@@ -37,10 +48,13 @@ async function view<T>(provider: JsonRpcProvider, contract: string, method: stri
 const json = (status: number, body: object) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-export async function handleRelay(body: any): Promise<Response> {
-  const contract = env("PAYPACT_CONTRACT");
+export async function handleRelay(body: any, origin = ""): Promise<Response> {
+  const contract = contractId();
   const provider = new JsonRpcProvider({ url: rpcUrl() });
   if (body?.method === "gasless") return gasless(provider, contract, body);
+  const testnet = process.env.NETWORK !== "mainnet";
+  if (body?.method === "demo_create" && testnet) return demoCreate(provider, contract);
+  if (body?.method === "demo_deliver" && testnet) return demoDeliver(provider, contract, String(body.invoice_id ?? ""), origin);
   const invoiceId = String(body?.invoice_id ?? "");
   if (!/^\d{1,18}$/.test(invoiceId)) return json(400, { error: "Bad invoice id" });
 
@@ -198,8 +212,63 @@ async function gasless(provider: JsonRpcProvider, contract: string, body: any): 
     }
     await relayer.callFunction({
       contractId: contract, methodName: "mark_delivered_for",
-      args: { freelancer: accountId, invoice_id: String(req.args.invoice_id ?? "") }, gas: 50n * TGAS,
+      args: {
+        freelancer: accountId,
+        invoice_id: String(req.args.invoice_id ?? ""),
+        link: typeof req.args.link === "string" ? req.args.link : null,
+        note: typeof req.args.note === "string" ? req.args.note : null,
+      },
+      gas: 50n * TGAS,
       waitUntil: FAST,
+    });
+    return json(200, { ok: true });
+  } catch (e) {
+    return json(422, { error: String((e as Error)?.message ?? e).split("\n")[0].slice(0, 300) });
+  }
+}
+
+// ---------------------------------------------------------------- "Try it now" demo (testnet)
+
+const DEMO_JOBS = [
+  { title: "Logo and brand kit for Bloom Café", amount: 250, upfront: 30 },
+  { title: "Landing page design for Kola Fitness", amount: 400, upfront: 0 },
+  { title: "Product photos retouch (20 images)", amount: 120, upfront: 50 },
+  { title: "Instagram launch posts (10 designs)", amount: 180, upfront: 0 },
+  { title: "Pitch deck redesign for Lumen Labs", amount: 300, upfront: 30 },
+];
+
+/** A fresh invoice from the demo freelancer, so anyone can try the client side without a wallet. */
+async function demoCreate(provider: JsonRpcProvider, contract: string) {
+  const job = DEMO_JOBS[Math.floor(Math.random() * DEMO_JOBS.length)];
+  try {
+    const id = await relayerAccount(provider).callFunction({
+      contractId: contract, methodName: "create_invoice_for", gas: 50n * TGAS, waitUntil: FAST,
+      args: {
+        freelancer: DEMO_FREELANCER, token: env("PAYPACT_TOKEN"), amount: String(job.amount * 1_000_000),
+        title: job.title, due_in_days: 5, review_days: 3, arbiter: null, upfront_percent: job.upfront,
+      },
+    });
+    return json(200, { invoice_id: String(id) });
+  } catch (e) {
+    return json(422, { error: String((e as Error)?.message ?? e).split("\n")[0].slice(0, 300) });
+  }
+}
+
+/** The demo freelancer "delivers" (only for its own funded invoices), with proof attached. */
+async function demoDeliver(provider: JsonRpcProvider, contract: string, invoiceId: string, origin: string) {
+  if (!/^\d{1,18}$/.test(invoiceId)) return json(400, { error: "Bad invoice id" });
+  const inv = await view<{ freelancer: string; status: string } | null>(provider, contract, "get_invoice", { invoice_id: invoiceId });
+  if (!inv || inv.freelancer !== DEMO_FREELANCER) return json(400, { error: "Not a demo invoice" });
+  if (inv.status !== "Funded") return json(400, { error: "The invoice must be paid first" });
+  const base = /^https:\/\/[a-z0-9.-]+$/i.test(origin) ? origin : "https://paypact-alpha.vercel.app";
+  try {
+    await relayerAccount(provider).callFunction({
+      contractId: contract, methodName: "mark_delivered_for", gas: 50n * TGAS, waitUntil: FAST,
+      args: {
+        freelancer: DEMO_FREELANCER, invoice_id: invoiceId,
+        link: `${base}/demo-delivery.html`,
+        note: "Final files attached: logo (SVG, PNG), colours and fonts. Thanks for the clear brief!",
+      },
     });
     return json(200, { ok: true });
   } catch (e) {
@@ -209,5 +278,5 @@ async function gasless(provider: JsonRpcProvider, contract: string, body: any): 
 
 export async function POST(request: Request): Promise<Response> {
   const body = await request.json().catch(() => null);
-  return handleRelay(body);
+  return handleRelay(body, new URL(request.url).origin);
 }

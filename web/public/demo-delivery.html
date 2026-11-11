@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Delivered work · PayPact demo</title>
+<link rel="icon" href="/favicon.svg" />
+<style>
+  :root { --bg: #f7f7f5; --card: #fff; --ink: #111; --muted: #666; --line: #e9e9e9; --orange: #ff6a13; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0b0b0b; --card: #161616; --ink: #f4f4f4; --muted: #a3a3a3; --line: #2a2a2a; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px 16px 48px; }
+  .tag { display: inline-block; background: var(--orange); color: #fff; font-weight: 700; font-size: 12px; padding: 3px 10px; border-radius: 99px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 20px; margin: 16px 0; }
+  .logos { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .logos > div { border-radius: 12px; display: grid; place-items: center; padding: 24px 12px; }
+  .swatches { display: flex; gap: 10px; flex-wrap: wrap; }
+  .swatches div { width: 84px; }
+  .swatches span { display: block; height: 56px; border-radius: 10px; border: 1px solid var(--line); }
+  .swatches small { color: var(--muted); }
+  a { color: var(--orange); }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <span class="tag">PayPact demo · sample delivery</span>
+  <h1 style="margin:12px 0 4px">Bloom Café: brand kit</h1>
+  <p class="muted">By Demo Designer. This is the kind of page a freelancer links as proof of delivery (in real life: a Google Drive, Figma or GitHub link).</p>
+
+  <div class="card">
+    <h3 style="margin-top:0">Logo</h3>
+    <div class="logos">
+      <div style="background:#fff4ec">
+        <svg width="150" height="90" viewBox="0 0 150 90" role="img" aria-label="Bloom Café logo">
+          <g transform="translate(36 40)">
+            <circle r="9" fill="#ff6a13" />
+            <g fill="#ffb27f"><circle cx="0" cy="-17" r="9" /><circle cx="16" cy="-5" r="9" /><circle cx="10" cy="14" r="9" /><circle cx="-10" cy="14" r="9" /><circle cx="-16" cy="-5" r="9" /></g>
+            <circle r="7" fill="#ff6a13" />
+          </g>
+          <text x="64" y="38" font-family="Georgia, serif" font-size="22" font-weight="700" fill="#111">Bloom</text>
+          <text x="65" y="58" font-family="system-ui, sans-serif" font-size="12" letter-spacing="3" fill="#111">CAFÉ</text>
+        </svg>
+      </div>
+      <div style="background:#111">
+        <svg width="150" height="90" viewBox="0 0 150 90" role="img" aria-label="Bloom Café logo on dark">
+          <g transform="translate(36 40)">
+            <g fill="#ff6a13"><circle cx="0" cy="-17" r="9" /><circle cx="16" cy="-5" r="9" /><circle cx="10" cy="14" r="9" /><circle cx="-10" cy="14" r="9" /><circle cx="-16" cy="-5" r="9" /></g>
+            <circle r="7" fill="#fff" />
+          </g>
+          <text x="64" y="38" font-family="Georgia, serif" font-size="22" font-weight="700" fill="#fff">Bloom</text>
+          <text x="65" y="58" font-family="system-ui, sans-serif" font-size="12" letter-spacing="3" fill="#fff">CAFÉ</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">Colours</h3>
+    <div class="swatches">
+      <div><span style="background:#ff6a13"></span><small>Petal #FF6A13</small></div>
+      <div><span style="background:#ffb27f"></span><small>Blush #FFB27F</small></div>
+      <div><span style="background:#111111"></span><small>Espresso #111111</small></div>
+      <div><span style="background:#fff4ec"></span><small>Cream #FFF4EC</small></div>
+    </div>
+    <h3>Fonts</h3>
+    <p style="font-family: Georgia, serif; font-size: 22px; margin: 0">Georgia Bold for headings</p>
+    <p class="muted" style="margin: 4px 0 0">System sans for everything else</p>
+  </div>
+
+  <p class="muted">Back on the invoice, approve the work to release the payment, or report a problem to freeze it.</p>
+  <p><a href="/">← Back to PayPact</a></p>
+</main>
+</body>
+</html>

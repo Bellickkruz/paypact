@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { config } from "../lib/config";
+import { config, displayName, isDemo } from "../lib/config";
 import { formatUsd, nsToDate } from "../lib/money";
 import { getInvoice, getProfile, heldAmount, type ClientAction, type Invoice, type Profile } from "../lib/near";
 import { loadClientSecret, newClientSecret, paymentMsg, privateLink, publicKeyOf, saveClientSecret } from "../lib/clientKey";
@@ -46,6 +46,7 @@ export function InvoicePage({ id }: { id: string }) {
 
   return (
     <main className="wrap">
+      {isDemo(inv.freelancer) && !isFreelancer && <DemoGuide inv={inv} isClient={isClient} refresh={refresh} />}
       <InvoiceSummary inv={inv} profile={profile} />
       {isFreelancer && <FreelancerPanel inv={inv} url={url} refresh={refresh} />}
       {!isFreelancer && inv.status === "AwaitingPayment" && (
@@ -79,7 +80,7 @@ function InvoiceSummary({ inv, profile }: { inv: Invoice; profile: [Profile, num
       <div className="amount">{formatUsd(inv.amount, { cents: true })}</div>
       <h3>{inv.title}</h3>
       <p className="muted small" style={{ marginBottom: 6 }}>
-        From <a href={`#/p/${inv.freelancer}`}>{inv.freelancer}</a> · due {shortDate(nsToDate(inv.due_at))}
+        From <a href={`#/p/${inv.freelancer}`}>{displayName(inv.freelancer)}</a> · due {shortDate(nsToDate(inv.due_at))}
         {BigInt(inv.upfront) > 0n && ` · ${formatUsd(inv.upfront, { cents: true })} up front`}
       </p>
       {p && (
@@ -90,6 +91,80 @@ function InvoiceSummary({ inv, profile }: { inv: Invoice; profile: [Profile, num
         </a>
       )}
       <Timeline inv={inv} />
+      {inv.delivered_at && <DeliveryProof inv={inv} />}
+    </div>
+  );
+}
+
+/** What was delivered and when, as recorded on-chain: the record a dispute is judged against. */
+function DeliveryProof({ inv }: { inv: Invoice }) {
+  const when = nsToDate(inv.delivered_at!);
+  const onTime = BigInt(inv.delivered_at!) <= BigInt(inv.due_at);
+  return (
+    <div className="proof">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <b>📦 Proof of delivery</b>
+        <span className={`badge ${onTime ? "ok" : "wait"}`}>{onTime ? "On time" : "Late"}</span>
+      </div>
+      <p className="small" style={{ margin: "6px 0" }}>
+        Delivered {when.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+      </p>
+      {inv.delivery?.note && <p className="small" style={{ margin: "6px 0" }}>"{inv.delivery.note}"</p>}
+      {inv.delivery?.link && (
+        <a className="btn small ghost" href={inv.delivery.link} target="_blank" rel="noreferrer noopener">View the delivered work ↗</a>
+      )}
+      <p className="hint" style={{ marginTop: 6 }}>Recorded on NEAR at the moment of delivery. Nobody can change it afterwards, so a dispute is judged against it.</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- "Try it now" demo
+
+/** Walks a visitor through the client side of a demo invoice; the demo freelancer is played by PayPact. */
+function DemoGuide({ inv, isClient, refresh }: { inv: Invoice; isClient: boolean; refresh: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const step =
+    inv.status === "AwaitingPayment" ? 1 : inv.status === "Funded" ? 2 : inv.status === "Delivered" ? 3 :
+    (inv.status === "Released" || inv.status === "Split") && !inv.rating ? 4 : 5;
+  const text = [
+    "",
+    "You're the client. Demo Designer sent you this invoice. Tap Pay below (it's free test money).",
+    "Your money is locked. Now let Demo Designer deliver the work:",
+    "The work is delivered, with proof recorded on-chain. Check it, then tap Approve & release below.",
+    "Paid out in seconds. Leave Demo Designer a rating below.",
+    "That's the whole flow! Now try it for real: create your own invoice.",
+  ][step];
+  const deliver = async () => {
+    setBusy(true);
+    try {
+      await relay({ method: "demo_deliver", invoice_id: inv.id });
+      toast("Demo Designer delivered the work");
+      refresh();
+      setTimeout(refresh, 2500);
+    } catch (e) {
+      toast(`Didn't go through: ${errText(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="card demo-guide stack">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <b>▶ Demo · step {Math.min(step, 4)} of 4</b>
+        <span className="muted small">testnet, no real money</span>
+      </div>
+      <p style={{ margin: 0 }}>{text}</p>
+      {step === 2 && isClient && (
+        <button className="btn gold" disabled={busy} onClick={deliver}>
+          <Busy busy={busy}>Demo Designer delivers the work</Busy>
+        </button>
+      )}
+      {step === 5 && (
+        <div className="row">
+          <a className="btn" href="#/new">Create my own invoice</a>
+          <a className="btn ghost" href={`#/p/${inv.freelancer}`}>See Demo Designer's profile</a>
+        </div>
+      )}
     </div>
   );
 }
@@ -105,7 +180,7 @@ function ProtectionNote({ inv }: { inv: Invoice }) {
       <span className="icon">🔒</span>
       <div>
         {up === BigInt(inv.amount) ? (
-          <>This is a <b>direct payment</b>: it goes straight to {inv.freelancer}, as you agreed.</>
+          <>This is a <b>direct payment</b>: it goes straight to {displayName(inv.freelancer)}, as you agreed.</>
         ) : (
           <>
             {up > 0n && <><b>{formatUsd(inv.upfront, { cents: true })}</b> goes to the freelancer right away, as agreed. </>}
@@ -340,7 +415,7 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
         <div className="card stack">
           <h3>Thanks, you've paid 🔒</h3>
           <p className="muted">
-            {formatUsd(held, { cents: true })} is held safely. {inv.freelancer} has been told the money is there and is working on it.
+            {formatUsd(held, { cents: true })} is held safely. {displayName(inv.freelancer)} has been told the money is there and is working on it.
             Work is due {shortDate(nsToDate(inv.due_at))}.
           </p>
           <CalendarButtons event={{ title: `Work due: ${inv.title}`, details: `PayPact invoice #${inv.id}`, start: nsToDate(inv.due_at), url }} />
@@ -359,7 +434,7 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
         <div className="card stack">
           <h3>📦 The work has been delivered</h3>
           <p className="muted">
-            Please review it. If you're happy, approve and {inv.freelancer} is paid in seconds.
+            Please review it. If you're happy, approve and {displayName(inv.freelancer)} is paid in seconds.
             {ends && <> If there's no response by <b>{shortDate(ends)}</b>, payment is released automatically.</>}
           </p>
           {ends && <CalendarButtons event={{ title: `Review & approve: ${inv.title}`, details: `Approve or report a problem before the automatic release. PayPact invoice #${inv.id}`, start: ends, url }} />}
@@ -385,7 +460,7 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
           <p className="small">You reported: "{inv.dispute_reason}"</p>
           {inv.proposal?.by === "Freelancer" && (
             <div className="card" style={{ margin: 0 }}>
-              <p>{inv.freelancer} offers: <b>{formatUsd(inv.proposal.to_freelancer, { cents: true })}</b> to them, <b>{formatUsd(held - BigInt(inv.proposal.to_freelancer), { cents: true })}</b> back to you.</p>
+              <p>{displayName(inv.freelancer)} offers: <b>{formatUsd(inv.proposal.to_freelancer, { cents: true })}</b> to them, <b>{formatUsd(held - BigInt(inv.proposal.to_freelancer), { cents: true })}</b> back to you.</p>
               <button className="btn" disabled={!!busy} onClick={() => act("accept", { type: "accept_split" }, "Settled. Thanks for working it out.")}>
                 <Busy busy={busy === "accept"}>Accept this split</Busy>
               </button>
@@ -404,7 +479,7 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
 
       {(inv.status === "Released" || inv.status === "Split") && !inv.rating && (
         <div className="card stack">
-          <h3>How was working with {inv.freelancer}?</h3>
+          <h3>How was working with {displayName(inv.freelancer)}?</h3>
           <div className="starpick">
             {[1, 2, 3, 4, 5].map((n) => (
               <button key={n} className={n <= stars ? "on" : ""} onClick={() => setStars(n)} aria-label={`${n} stars`}>★</button>
@@ -418,7 +493,7 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
         </div>
       )}
       {(inv.status === "Released" || inv.status === "Split") && inv.rating && (
-        <div className="card green center">Thanks for paying with PayPact. You rated {inv.freelancer} <Stars value={inv.rating.stars} />.</div>
+        <div className="card green center">Thanks for paying with PayPact. You rated {displayName(inv.freelancer)} <Stars value={inv.rating.stars} />.</div>
       )}
 
       {!FINAL.includes(inv.status) && !inv.client_refund_to && (
@@ -470,10 +545,14 @@ function FreelancerPanel({ inv, url, refresh }: { inv: Invoice; url: string; ref
   };
   const wallet = (method: string, args: object = {}, deposit = ONE_YOCTO) =>
     callContract(method, { invoice_id: inv.id, ...args }, { deposit });
+  const [link, setLink] = useState("");
+  const [note, setNote] = useState("");
+  const proofArgs = { invoice_id: inv.id, link: link.trim() || null, note: note.trim() || null };
+  const linkOk = !link.trim() || /^https:\/\/\S+$/.test(link.trim());
   const markDelivered = () =>
     accountId && loadAssistantKey(accountId)
-      ? assistantCall(accountId, "mark_delivered", { invoice_id: inv.id })
-      : signedRequest("mark_delivered", { invoice_id: inv.id });
+      ? assistantCall(accountId, "mark_delivered", proofArgs)
+      : signedRequest("mark_delivered", proofArgs);
 
   const shareText = `Hi, here's my invoice for ${inv.title}: ${formatUsd(inv.amount, { cents: true })}. You can pay with any crypto you have, and your payment is held safely until you approve the work:`;
   const nudge = `Hi! A friendly reminder from PayPact: the invoice for "${inv.title}" (${formatUsd(inv.amount, { cents: true })}) is ready whenever you are. Your payment stays protected until you approve the work.`;
@@ -499,7 +578,17 @@ function FreelancerPanel({ inv, url, refresh }: { inv: Invoice; url: string; ref
             The client can't pull this money back while you work. Deliver by <b>{shortDate(nsToDate(inv.due_at))}</b>, then mark it delivered.
           </p>
           <CalendarButtons event={{ title: `Deliver: ${inv.title}`, details: `PayPact invoice #${inv.id}: mark it delivered when done.`, start: nsToDate(inv.due_at), url }} />
-          <button className="btn big block" disabled={!!busy} onClick={() => run("deliver", markDelivered, "Marked delivered. The client has been asked to review.")}>
+          <div className="field">
+            <label htmlFor="dlink">Link to the work (recommended)</label>
+            <input id="dlink" inputMode="url" placeholder="https://drive.google.com/…" value={link} onChange={(e) => setLink(e.target.value)} />
+            {!linkOk && <div className="err small">Use a full link starting with https://</div>}
+          </div>
+          <div className="field">
+            <label htmlFor="dnote">Short note (optional)</label>
+            <input id="dnote" maxLength={280} placeholder="Final logo files and brand guide" value={note} onChange={(e) => setNote(e.target.value)} />
+            <div className="hint">Saved on-chain with the time you delivered. If the client ever claims nothing was delivered, this is your proof.</div>
+          </div>
+          <button className="btn big block" disabled={!!busy || !linkOk} onClick={() => run("deliver", markDelivered, "Marked delivered. The client has been asked to review.")}>
             {busy === "deliver" ? <><span className="spinner" /> Confirm in your wallet…</> : "I've delivered the work"}
           </button>
         </div>

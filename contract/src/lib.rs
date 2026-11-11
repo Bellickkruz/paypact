@@ -104,6 +104,17 @@ pub struct Invoice {
     pub owed_client: U128,
     /// The client's rating of the freelancer, left once after settlement.
     pub rating: Option<Rating>,
+    /// Proof of delivery the freelancer attached; its time is `delivered_at`.
+    pub delivery: Option<Delivery>,
+}
+
+/// What the freelancer handed over: a link to the work and a short note,
+/// recorded on-chain so a later dispute can be judged against it.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug)]
+pub struct Delivery {
+    pub link: Option<String>,
+    pub note: Option<String>,
 }
 
 #[near(serializers = [borsh, json])]
@@ -228,9 +239,9 @@ impl Contract {
     }
 
     /// Gasless "work delivered", submitted by the relayer for the freelancer.
-    pub fn mark_delivered_for(&mut self, freelancer: AccountId, invoice_id: U64) {
+    pub fn mark_delivered_for(&mut self, freelancer: AccountId, invoice_id: U64, link: Option<String>, note: Option<String>) {
         self.assert_relayer();
-        self.internal_mark_delivered(&freelancer, invoice_id);
+        self.internal_mark_delivered(&freelancer, invoice_id, link, note);
     }
 
     /// Owner sets the relayer account (or removes it with None).
@@ -247,9 +258,10 @@ impl Contract {
 
     /// Mark the work delivered; starts the client's review window.
     /// Callable with a function-call key.
-    pub fn mark_delivered(&mut self, invoice_id: U64) {
+    /// `link` (https://...) and `note` are optional proof of what was delivered.
+    pub fn mark_delivered(&mut self, invoice_id: U64, link: Option<String>, note: Option<String>) {
         let freelancer = env::predecessor_account_id();
-        self.internal_mark_delivered(&freelancer, invoice_id);
+        self.internal_mark_delivered(&freelancer, invoice_id, link, note);
     }
 
     /// Withdraw an unpaid invoice. Requires 1 yoctoNEAR (full-access key).
@@ -616,19 +628,31 @@ impl Contract {
                 owed_freelancer: U128(0),
                 owed_client: U128(0),
                 rating: None,
+                delivery: None,
             },
         );
         env::log_str(&format!("invoice_created id={id}"));
         U64(id)
     }
 
-    fn internal_mark_delivered(&mut self, freelancer: &AccountId, invoice_id: U64) {
+    fn internal_mark_delivered(&mut self, freelancer: &AccountId, invoice_id: U64, link: Option<String>, note: Option<String>) {
         let mut inv = self.get_mut(invoice_id);
         require!(*freelancer == inv.freelancer, "Only the freelancer");
         require!(inv.status == Status::Funded, "Invoice is not funded");
+        let link = link.map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
+        let note = note.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+        if let Some(l) = &link {
+            require!(l.starts_with("https://") && l.len() <= 300, "Link must start with https:// (max 300 characters)");
+        }
+        if let Some(n) = &note {
+            require!(n.chars().count() <= 280, "Note is too long (max 280 characters)");
+        }
         let now = env::block_timestamp();
         inv.status = Status::Delivered;
         inv.delivered_at = Some(U64(now));
+        if link.is_some() || note.is_some() {
+            inv.delivery = Some(Delivery { link, note });
+        }
         let on_time = now <= inv.due_at.0;
         self.update_profile(&inv.freelancer, |p| {
             p.delivered += 1;

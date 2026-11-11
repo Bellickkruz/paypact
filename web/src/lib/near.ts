@@ -35,6 +35,8 @@ export interface Invoice {
   owed_freelancer: string;
   owed_client: string;
   rating: { stars: number; comment: string | null; at: string } | null;
+  /** Proof of delivery, recorded on-chain when the work was marked delivered. */
+  delivery: { link: string | null; note: string | null } | null;
 }
 
 export interface Profile {

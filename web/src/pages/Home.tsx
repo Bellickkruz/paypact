@@ -1,11 +1,26 @@
+import { useState } from "react";
 import { useWallet } from "../lib/wallet";
-import { go } from "../ui";
+import { config } from "../lib/config";
+import { relay } from "../lib/relay";
+import { Busy, errText, go, toast } from "../ui";
 
 export function Home() {
   const { accountId, connect } = useWallet();
   const start = async () => {
     if (!accountId) await connect();
     go("/new");
+  };
+  const [trying, setTrying] = useState(false);
+  const tryDemo = async () => {
+    setTrying(true);
+    try {
+      const { invoice_id } = (await relay({ method: "demo_create" })) as unknown as { invoice_id: string };
+      go(`/i/${invoice_id}`);
+    } catch (e) {
+      toast(`Couldn't start the demo: ${errText(e)}`);
+    } finally {
+      setTrying(false);
+    }
   };
   return (
     <main className="wrap wide">
@@ -19,6 +34,14 @@ export function Home() {
           <button className="btn big gold" onClick={start}>Create a free invoice</button>
           <span className="muted small">Free to send. You don't need any crypto to start, and your client needs no account.</span>
         </div>
+        {config.demoFreelancer && (
+          <div className="trynow">
+            <button className="btn big ghost" disabled={trying} onClick={tryDemo}>
+              <Busy busy={trying}>▶ Try it now, no wallet needed</Busy>
+            </button>
+            <span className="muted small">Play the client: pay a sample invoice, get the work, approve it. About 60 seconds.</span>
+          </div>
+        )}
       </section>
 
       <section className="steps3" style={{ marginTop: 28 }}>
