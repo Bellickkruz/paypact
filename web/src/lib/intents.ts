@@ -88,6 +88,61 @@ export async function swapStatus(depositAddress: string, memo?: string): Promise
   return json.status as SwapStatus;
 }
 
+// ---------------------------------------------------------------- live price preview
+
+const MAINNET_USDC = "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
+/** Valid-looking refund addresses, only used so a dry (price-only) quote passes validation. */
+const SAMPLE_REFUND: Record<string, string> = {
+  Base: "0x0000000000000000000000000000000000000001",
+  Ethereum: "0x0000000000000000000000000000000000000001",
+  Arbitrum: "0x0000000000000000000000000000000000000001",
+  Solana: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+  Tron: "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb",
+  Bitcoin: "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
+};
+/** The coins shown in the testnet preview: the most common ways people hold crypto. */
+export const PREVIEW_OPTIONS = PAY_OPTIONS.filter((o) =>
+  ["USDC Base", "USDT Tron", "USDC Solana", "ETH Ethereum", "SOL Solana", "BTC Bitcoin"].includes(`${o.label} ${o.chain}`),
+);
+
+/**
+ * A real, live price from NEAR Intents for paying `amountOut` (USDC units, 6 decimals)
+ * with `assetId`, fees included. `dry: true` means no deposit address is created and
+ * nothing can be sent: it's the price only. Always priced against mainnet USDC.
+ */
+export async function previewQuote(assetId: string, chain: string, amountOut: string): Promise<string> {
+  const res = await fetch(`${API}/quote`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      dry: true,
+      swapType: "EXACT_OUTPUT",
+      slippageTolerance: 100,
+      originAsset: assetId,
+      depositType: "ORIGIN_CHAIN",
+      destinationAsset: MAINNET_USDC,
+      amount: amountOut,
+      recipient: "intents.near",
+      recipientType: "DESTINATION_CHAIN",
+      refundTo: SAMPLE_REFUND[chain],
+      refundType: "ORIGIN_CHAIN",
+      deadline: new Date(Date.now() + 30 * 60_000).toISOString(),
+      referral: "paypact",
+    }),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.quote) throw new Error(json.message ?? `Quote failed (${res.status})`);
+  return json.quote.amountInFormatted as string;
+}
+
+/** 252.547999 -> "252.55"; 0.121674759 -> "0.1217"; 0.00338841 -> "0.003388". */
+export function friendlyAmount(formatted: string): string {
+  const n = Number(formatted);
+  if (!isFinite(n)) return formatted;
+  if (n >= 100) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return Number(n.toPrecision(4)).toString();
+}
+
 /** Rough check that an address fits the chain, to catch obvious paste mistakes. */
 export function looksLikeAddress(chain: string, addr: string): boolean {
   const a = addr.trim();

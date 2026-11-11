@@ -12,8 +12,7 @@ type Theme = "light" | "dark";
 
 function currentTheme(): Theme {
   const set = document.documentElement.getAttribute("data-theme");
-  if (set === "light" || set === "dark") return set;
-  return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return set === "dark" ? "dark" : "light";
 }
 
 function ThemeToggle() {

@@ -4,7 +4,7 @@ import { formatUsd, nsToDate } from "../lib/money";
 import { getInvoice, getProfile, heldAmount, type ClientAction, type Invoice, type Profile } from "../lib/near";
 import { loadClientSecret, newClientSecret, paymentMsg, privateLink, publicKeyOf, saveClientSecret } from "../lib/clientKey";
 import { relay, sendClientAction } from "../lib/relay";
-import { PAY_OPTIONS, looksLikeAddress, quotePayment, swapStatus, type Quote, type SwapStatus } from "../lib/intents";
+import { PAY_OPTIONS, PREVIEW_OPTIONS, friendlyAmount, previewQuote, looksLikeAddress, quotePayment, swapStatus, type Quote, type SwapStatus } from "../lib/intents";
 import { callContract, ONE_YOCTO, signedRequest, useWallet } from "../lib/wallet";
 import { assistantCall, loadAssistantKey } from "../lib/assistant";
 import { downloadIcs, googleCalendarUrl, type CalendarEvent } from "../lib/calendar";
@@ -218,10 +218,7 @@ function DemoPay({ inv, ensureSecret, refresh }: { inv: Invoice; ensureSecret: (
   const [error, setError] = useState("");
   return (
     <div className="stack">
-      <p className="muted small">
-        This is the testnet demo, so you pay with free test dollars. On mainnet this button becomes
-        "pay with any crypto": USDC, USDT, ETH, SOL or BTC on any chain, swapped by NEAR Intents.
-      </p>
+      <AnyChainPreview amount={inv.amount} />
       {error && <p className="err">{error}</p>}
       <button
         className="btn big block gold"
@@ -243,6 +240,49 @@ function DemoPay({ inv, ensureSecret, refresh }: { inv: Invoice; ensureSecret: (
       >
         <Busy busy={busy}>Pay {formatUsd(inv.amount, { cents: true })} (test money)</Busy>
       </button>
+    </div>
+  );
+}
+
+/** Testnet: live NEAR Intents prices for this invoice, proving the any-crypto route is real. */
+function AnyChainPreview({ amount }: { amount: string }) {
+  const [rows, setRows] = useState<Record<string, string>>({});
+  const [at, setAt] = useState<Date | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      Promise.all(
+        PREVIEW_OPTIONS.map((o) =>
+          previewQuote(o.assetId, o.chain, amount)
+            .then((v) => live && setRows((r) => ({ ...r, [o.assetId]: friendlyAmount(v) })))
+            .catch(() => live && setRows((r) => ({ ...r, [o.assetId]: "–" }))),
+        ),
+      ).then(() => live && setAt(new Date()));
+    load();
+    const t = setInterval(load, 30_000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [amount]);
+  return (
+    <div className="preview">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <b>On mainnet, pay with any crypto</b>
+        <span className="badge lock">Live prices</span>
+      </div>
+      <div className="preview-grid">
+        {PREVIEW_OPTIONS.map((o) => (
+          <div key={o.assetId} className="preview-row">
+            <span className="muted small">{o.label} on {o.chain}</span>
+            <b>{rows[o.assetId] ? `${rows[o.assetId]} ${o.label}` : <span className="spinner dark" />}</b>
+          </div>
+        ))}
+      </div>
+      <p className="hint" style={{ margin: 0 }}>
+        Real quotes from NEAR Intents, fees included{at ? `, updated ${at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : ""}.
+        Any-crypto payment runs on mainnet only, so this testnet demo pays with free test dollars below.
+      </p>
     </div>
   );
 }
@@ -411,6 +451,7 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
   return (
     <>
       {error && <div className="card red small"><b>Didn't go through:</b> {error}</div>}
+      {!FINAL.includes(inv.status) && <SaveControlLink inv={inv} secret={secret} />}
       {inv.status === "Funded" && (
         <div className="card stack">
           <h3>Thanks, you've paid 🔒</h3>
@@ -507,14 +548,60 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
         </details>
       )}
 
-      <details className="card soft">
-        <summary>🔑 Save your private link</summary>
-        <p className="small muted" style={{ marginTop: 8 }}>
-          This link lets you approve, report a problem or rate from any device. Keep it private: whoever has it can act for you on this invoice.
-        </p>
-        <CopyField value={privateLink(inv.id, secret)} />
-      </details>
     </>
+  );
+}
+
+/**
+ * The client's power to approve or dispute lives in this browser. If they clear it or
+ * switch phones, that protection is gone, so right after paying we ask them to send
+ * the private link to themselves, and keep asking until they do.
+ */
+function SaveControlLink({ inv, secret }: { inv: Invoice; secret: string }) {
+  const key = `paypact:${config.contract}:saved:${inv.id}`;
+  const [saved, setSaved] = useState(() => {
+    try {
+      return localStorage.getItem(key) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [open, setOpen] = useState(false);
+  const link = privateLink(inv.id, secret);
+  const markSaved = () => {
+    setSaved(true);
+    try {
+      localStorage.setItem(key, "1");
+    } catch {
+      /* fine: we'll just ask again next time */
+    }
+  };
+  const msg = `My PayPact control link for "${inv.title}" (${formatUsd(inv.amount, { cents: true })}). It lets me approve the work or report a problem from any device. Don't share it.\n\n${link}`;
+  const subject = `PayPact: control link for invoice #${inv.id}`;
+
+  if (saved && !open) {
+    return (
+      <div className="card soft row small" style={{ justifyContent: "space-between" }}>
+        <span>✅ Control link saved</span>
+        <button className="btn small ghost" onClick={() => setOpen(true)}>Show it again</button>
+      </div>
+    );
+  }
+  return (
+    <div className="card stack keycard">
+      <h3>🔑 Save your control link, it takes 5 seconds</h3>
+      <p className="small" style={{ margin: 0 }}>
+        Your power to <b>approve the work or get your money back</b> is stored only in this browser. If you clear it or change phones,
+        you'd lose that protection. Send this link <b>to yourself</b> so you can act from any device.
+      </p>
+      <div className="row">
+        <a className="btn small" href={`https://wa.me/?text=${encodeURIComponent(msg)}`} target="_blank" rel="noreferrer" onClick={markSaved}>WhatsApp (to myself)</a>
+        <a className="btn small ghost" href={`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(subject)}`} target="_blank" rel="noreferrer" onClick={markSaved}>Telegram (Saved Messages)</a>
+        <a className="btn small ghost" href={`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(msg)}`} onClick={markSaved}>Email it to me</a>
+      </div>
+      <div onClick={(e) => (e.target as HTMLElement).tagName === "BUTTON" && markSaved()}><CopyField label="Or copy it" value={link} /></div>
+      <p className="hint" style={{ margin: 0 }}>Keep it private: anyone with this link can approve or dispute for you. The freelancer never sees it.</p>
+    </div>
   );
 }
 
