@@ -219,3 +219,9 @@ footer { text-align: center; color: var(--muted); font-size: 13px; padding: 24px
   .receipt-wrap { padding: 0 !important; max-width: none !important; }
   .receipt { border: none; padding: 0; }
 }
+
+/* Language switch */
+.langpick { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; }
+.langpick select { border: 1px solid var(--line); background: var(--raised); color: var(--ink); border-radius: 99px; padding: 3px 8px; font: inherit; font-size: 13px; }
+.translate { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.copy .btn { white-space: nowrap; }

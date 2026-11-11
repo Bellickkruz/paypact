@@ -4,6 +4,7 @@ import { config } from "./lib/config";
 import type { Invoice, Status } from "./lib/near";
 import { formatUsd } from "./lib/money";
 import { useWallet } from "./lib/wallet";
+import { LANGS, locale, setLang, t, translateUrl, useLang, type Lang } from "./lib/i18n";
 
 export const go = (path: string) => {
   location.hash = path;
@@ -75,7 +76,7 @@ const STATUS: Record<Status, { label: string; cls: string }> = {
 };
 
 export const StatusBadge = ({ status }: { status: Status }) => (
-  <span className={`badge ${STATUS[status].cls}`}>{STATUS[status].label}</span>
+  <span className={`badge ${STATUS[status].cls}`}>{t(STATUS[status].label)}</span>
 );
 
 export function Timeline({ inv }: { inv: Invoice }) {
@@ -84,10 +85,10 @@ export function Timeline({ inv }: { inv: Invoice }) {
   const delivered = ["Delivered", "Disputed", "Released", "Split"].includes(s) && !!inv.delivered_at;
   const done = ["Released", "Split", "Refunded"].includes(s);
   const steps = [
-    { label: "Invoice sent", done: true },
-    { label: "Paid & locked", done: paid, sub: paid && BigInt(inv.upfront) > 0n ? `${formatUsd(inv.upfront)} sent up front` : "" },
-    { label: "Work delivered", done: delivered || (done && s === "Released") },
-    { label: s === "Refunded" ? "Refunded" : "Paid out", done },
+    { label: t("Invoice sent"), done: true, sub: "" },
+    { label: t("Paid & locked"), done: paid, sub: paid && BigInt(inv.upfront) > 0n ? t("{amount} sent up front", { amount: formatUsd(inv.upfront) }) : "" },
+    { label: t("Work delivered"), done: delivered || (done && s === "Released"), sub: "" },
+    { label: t(s === "Refunded" ? "Refunded" : "Paid out"), done, sub: "" },
   ];
   const nowIndex = steps.findIndex((x) => !x.done);
   return (
@@ -105,7 +106,7 @@ export function Timeline({ inv }: { inv: Invoice }) {
 
 export function Stars({ value, count }: { value: number; count?: number }) {
   // No ratings yet reads as "new", not as zero stars.
-  if (count === 0) return <span className="badge wait">New on PayPact</span>;
+  if (count === 0) return <span className="badge wait">{t("New on PayPact")}</span>;
   const full = Math.round(value);
   return (
     <span>
@@ -145,9 +146,9 @@ export function CopyField({ value, label }: { value: string; label?: string }) {
         <input readOnly value={value} onFocus={(e) => e.currentTarget.select()} />
         <button
           className="btn small ghost"
-          onClick={() => navigator.clipboard.writeText(value).then(() => toast("Copied"))}
+          onClick={() => navigator.clipboard.writeText(value).then(() => toast(t("Copied")))}
         >
-          Copy
+          {t("Copy")}
         </button>
       </div>
     </div>
@@ -195,7 +196,42 @@ export function Busy({ busy, children }: { busy: boolean; children: ReactNode })
 
 export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 export const shortDate = (d: Date) =>
-  d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  // Some locales end abbreviations with "." ("mer. 18 nov."); drop it so sentences don't get "..".
+  d.toLocaleDateString(locale(), { weekday: "short", day: "numeric", month: "short" }).replace(/\.$/, "");
+
+/** Renders **bold** segments of a translated sentence. */
+export function Rich({ text }: { text: string }) {
+  return <>{text.split("**").map((part, i) => (i % 2 ? <b key={i}>{part}</b> : part))}</>;
+}
+
+/** 🌐 language switch for the client side of an invoice. */
+export function LangPicker() {
+  const lang = useLang();
+  return (
+    <label className="langpick" title={t("Language")}>
+      🌐
+      <select value={lang} onChange={(e) => setLang(e.target.value as Lang)} aria-label={t("Language")}>
+        {LANGS.map((l) => <option key={l.code} value={l.code}>{l.name}</option>)}
+      </select>
+    </label>
+  );
+}
+
+/** Text written by a person (job title, note), with a Translate link when the page isn't in English. */
+export function TranslatableText({ text }: { text: string }) {
+  const lang = useLang();
+  return (
+    <>
+      {text}
+      {lang !== "en" && (
+        <>
+          {" "}
+          <a className="translate" href={translateUrl(text)} target="_blank" rel="noreferrer">{t("Translate")} ↗</a>
+        </>
+      )}
+    </>
+  );
+}
 export const errText = (e: unknown) => {
   const m = String((e as Error)?.message ?? e);
   const panic = m.match(/Smart contract panicked: ([^"\\]+)/) ?? m.match(/"([A-Z][^"\\]{6,120})"/);

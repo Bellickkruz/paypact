@@ -8,13 +8,15 @@ import { PAY_OPTIONS, PREVIEW_OPTIONS, friendlyAmount, previewQuote, looksLikeAd
 import { callContract, ONE_YOCTO, signedRequest, useWallet } from "../lib/wallet";
 import { assistantCall, loadAssistantKey } from "../lib/assistant";
 import { downloadIcs, googleCalendarUrl, type CalendarEvent } from "../lib/calendar";
-import { Busy, CopyField, NudgeButtons, Qr, ShareButtons, Stars, StatusBadge, Timeline, errText, shortDate, toast } from "../ui";
+import { Busy, CopyField, LangPicker, NudgeButtons, Qr, Rich, ShareButtons, Stars, StatusBadge, Timeline, TranslatableText, errText, shortDate, toast } from "../ui";
+import { locale, t, useLang } from "../lib/i18n";
 
 const DAY_MS = 86_400_000;
 const FINAL = ["Released", "Refunded", "Split", "Cancelled"];
 
 export function InvoicePage({ id }: { id: string }) {
   const { accountId, connect } = useWallet();
+  useLang(); // re-render everything below when the language changes
   const [inv, setInv] = useState<Invoice | null | undefined>(undefined);
   const [profile, setProfile] = useState<[Profile, number] | null>(null);
   const [secret, setSecret] = useState<string | null>(() => loadClientSecret(id));
@@ -38,7 +40,7 @@ export function InvoicePage({ id }: { id: string }) {
   }, [inv?.freelancer, inv?.status]);
 
   if (inv === undefined) return <main className="wrap"><div className="card center"><span className="spinner dark" /></div></main>;
-  if (inv === null) return <main className="wrap"><div className="card center"><h2>Invoice not found</h2><p className="muted">Check the link and try again.</p></div></main>;
+  if (inv === null) return <main className="wrap"><div className="card center"><h2>{t("Invoice not found")}</h2><p className="muted">{t("Check the link and try again.")}</p></div></main>;
 
   const isFreelancer = accountId === inv.freelancer;
   const isClient = !!secret && !!inv.client_key && publicKeyOf(secret) === inv.client_key;
@@ -55,10 +57,10 @@ export function InvoicePage({ id }: { id: string }) {
       {!isFreelancer && isClient && <ClientPanel inv={inv} secret={secret!} refresh={refresh} />}
       {!isFreelancer && !isClient && inv.status !== "AwaitingPayment" && (
         <div className="card soft center muted small">
-          Paid this invoice on another device? Open the private link you saved when you paid.
+          {t("Paid this invoice on another device? Open the private link you saved when you paid.")}
           {!accountId && (
             <>
-              {" "}Are you the freelancer? <a href="#" onClick={(e) => { e.preventDefault(); connect(); }}>Sign in</a>.
+              {" "}{t("Are you the freelancer?")} <a href="#" onClick={(e) => { e.preventDefault(); connect(); }}>{t("Sign in")}</a>.
             </>
           )}
         </div>
@@ -74,27 +76,30 @@ function InvoiceSummary({ inv, profile }: { inv: Invoice; profile: [Profile, num
   return (
     <div className="card">
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <span className="muted small">Invoice #{inv.id}</span>
-        <StatusBadge status={inv.status} />
+        <span className="muted small">{t("Invoice #{id}", { id: inv.id })}</span>
+        <span className="row" style={{ gap: 8 }}>
+          <LangPicker />
+          <StatusBadge status={inv.status} />
+        </span>
       </div>
       <div className="amount">{formatUsd(inv.amount, { cents: true })}</div>
-      <h3>{inv.title}</h3>
+      <h3><TranslatableText text={inv.title} /></h3>
       <p className="muted small" style={{ marginBottom: 6 }}>
-        From <a href={`#/p/${inv.freelancer}`}>{displayName(inv.freelancer)}</a> · due {shortDate(nsToDate(inv.due_at))}
+        {t("From")} <a href={`#/p/${inv.freelancer}`}>{displayName(inv.freelancer)}</a> · {t("due {date}", { date: shortDate(nsToDate(inv.due_at)) })}
       </p>
       <PaymentSplit inv={inv} />
       {p && (
         <a href={`#/p/${inv.freelancer}`} className="small" style={{ textDecoration: "none" }}>
           <Stars value={avg / 100} count={p.rating_count} />{" "}
-          <span className="muted">· {p.completed} {p.completed === 1 ? "job" : "jobs"} completed
-            {p.delivered > 0 && ` · ${Math.round((p.delivered_on_time / p.delivered) * 100)}% on time`}</span>
+          <span className="muted">· {p.completed === 1 ? t("1 job completed") : t("{n} jobs completed", { n: p.completed })}
+            {p.delivered > 0 && ` · ${t("{pct}% on time", { pct: Math.round((p.delivered_on_time / p.delivered) * 100) })}`}</span>
         </a>
       )}
       <Timeline inv={inv} />
       {inv.delivered_at && <DeliveryProof inv={inv} />}
       {inv.status !== "AwaitingPayment" && inv.status !== "Cancelled" && (
         <div className="row" style={{ marginTop: 12 }}>
-          <a className="btn small ghost" href={`#/r/${inv.id}`}>🧾 Receipt (PDF)</a>
+          <a className="btn small ghost" href={`#/r/${inv.id}`}>{t("🧾 Receipt (PDF)")}</a>
         </div>
       )}
     </div>
@@ -110,14 +115,16 @@ function PaymentSplit({ inv }: { inv: Invoice }) {
   if (up === BigInt(inv.amount)) {
     return (
       <div className="split-box">
-        <div>💸 <b>Direct payment:</b> the full {upText} {paid ? "went" : "goes"} straight to the freelancer, as agreed. It is not held in escrow.</div>
+        <div>💸 <Rich text={t(paid
+          ? "**Direct payment:** the full {amount} went straight to the freelancer, as agreed. It is not held in escrow."
+          : "**Direct payment:** the full {amount} goes straight to the freelancer, as agreed. It is not held in escrow.", { amount: upText })} /></div>
       </div>
     );
   }
   return (
     <div className="split-box">
-      <div>💸 <b>{upText}</b> {paid ? "paid to the freelancer immediately" : "goes to the freelancer immediately"} <span className="muted">(agreed up front)</span></div>
-      <div>🔒 <b>{formatUsd(heldAmount(inv), { cents: true })}</b> held safely until you approve the work</div>
+      <div>💸 <Rich text={t(paid ? "**{amount}** paid to the freelancer immediately" : "**{amount}** goes to the freelancer immediately", { amount: upText })} /> <span className="muted">{t("(agreed up front)")}</span></div>
+      <div>🔒 <Rich text={t("**{amount}** held safely until you approve the work", { amount: formatUsd(heldAmount(inv), { cents: true }) })} /></div>
     </div>
   );
 }
@@ -129,17 +136,17 @@ function DeliveryProof({ inv }: { inv: Invoice }) {
   return (
     <div className="proof">
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <b>📦 Proof of delivery</b>
-        <span className={`badge ${onTime ? "ok" : "wait"}`}>{onTime ? "On time" : "Late"}</span>
+        <b>{t("📦 Proof of delivery")}</b>
+        <span className={`badge ${onTime ? "ok" : "wait"}`}>{onTime ? t("On time") : t("Late")}</span>
       </div>
       <p className="small" style={{ margin: "6px 0" }}>
-        Delivered {when.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+        {t("Delivered {date}", { date: when.toLocaleString(locale(), { dateStyle: "medium", timeStyle: "short" }) })}
       </p>
-      {inv.delivery?.note && <p className="small" style={{ margin: "6px 0" }}>"{inv.delivery.note}"</p>}
+      {inv.delivery?.note && <p className="small" style={{ margin: "6px 0" }}>"<TranslatableText text={inv.delivery.note} />"</p>}
       {inv.delivery?.link && (
-        <a className="btn small ghost" href={inv.delivery.link} target="_blank" rel="noreferrer noopener">View the delivered work ↗</a>
+        <a className="btn small ghost" href={inv.delivery.link} target="_blank" rel="noreferrer noopener">{t("View the delivered work ↗")}</a>
       )}
-      <p className="hint" style={{ marginTop: 6 }}>Recorded on NEAR at the moment of delivery. Nobody can change it afterwards, so a dispute is judged against it.</p>
+      <p className="hint" style={{ marginTop: 6 }}>{t("Recorded on NEAR at the moment of delivery. Nobody can change it afterwards, so a dispute is judged against it.")}</p>
     </div>
   );
 }
@@ -160,11 +167,12 @@ function DemoGuide({ inv, isClient, refresh }: { inv: Invoice; isClient: boolean
     "Paid out in seconds. Leave Demo Designer a rating below.",
     "That's the whole flow! Now try it for real: create your own invoice.",
   ][step];
+  const tr = text ? t(text) : "";
   const deliver = async () => {
     setBusy(true);
     try {
       await relay({ method: "demo_deliver", invoice_id: inv.id });
-      toast("Demo Designer delivered the work");
+      toast(t("Demo Designer delivered the work"));
       refresh();
       setTimeout(refresh, 2500);
     } catch (e) {
@@ -176,19 +184,19 @@ function DemoGuide({ inv, isClient, refresh }: { inv: Invoice; isClient: boolean
   return (
     <div className="card demo-guide stack">
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <b>▶ Demo · step {Math.min(step, 4)} of 4</b>
-        <span className="muted small">testnet, no real money</span>
+        <b>{t("▶ Demo · step {n} of 4", { n: Math.min(step, 4) })}</b>
+        <span className="muted small">{t("testnet, no real money")}</span>
       </div>
-      <p style={{ margin: 0 }}>{text}</p>
+      <p style={{ margin: 0 }}>{tr}</p>
       {step === 2 && isClient && (
         <button className="btn gold" disabled={busy} onClick={deliver}>
-          <Busy busy={busy}>Demo Designer delivers the work</Busy>
+          <Busy busy={busy}>{t("Demo Designer delivers the work")}</Busy>
         </button>
       )}
       {step === 5 && (
         <div className="row">
-          <a className="btn" href="#/new">Create my own invoice</a>
-          <a className="btn ghost" href={`#/p/${inv.freelancer}`}>See Demo Designer's profile</a>
+          <a className="btn" href="#/new">{t("Create my own invoice")}</a>
+          <a className="btn ghost" href={`#/p/${inv.freelancer}`}>{t("See Demo Designer's profile")}</a>
         </div>
       )}
     </div>
@@ -206,12 +214,11 @@ function ProtectionNote({ inv }: { inv: Invoice }) {
       <span className="icon">🔒</span>
       <div>
         {up === BigInt(inv.amount) ? (
-          <>This is a <b>direct payment</b>: it goes straight to {displayName(inv.freelancer)}, as you agreed.</>
+          <Rich text={t("This is a **direct payment**: it goes straight to {name}, as you agreed.", { name: displayName(inv.freelancer) })} />
         ) : (
           <>
-            {up > 0n && <><b>{formatUsd(inv.upfront, { cents: true })}</b> goes to the freelancer right away, as agreed. </>}
-            <b>{formatUsd(heldAmount(inv), { cents: true })} is held safely</b> by a smart contract. It's released only when you
-            approve the work, and refunded to you if nothing is delivered by {refundBy}. Not even PayPact can touch it.
+            {up > 0n && <><Rich text={t("**{amount}** goes to the freelancer right away, as agreed.", { amount: formatUsd(inv.upfront, { cents: true }) })} /> </>}
+            <Rich text={t("**{amount} is held safely** by a smart contract. It's released only when you approve the work, and refunded to you if nothing is delivered by {date}. Not even PayPact can touch it.", { amount: formatUsd(heldAmount(inv), { cents: true }), date: refundBy })} />
           </>
         )}
       </div>
@@ -231,7 +238,7 @@ function PayPanel({ inv, secret, onSecret, refresh }: {
   };
   return (
     <div className="card stack">
-      <h2>Pay this invoice</h2>
+      <h2>{t("Pay this invoice")}</h2>
       <ProtectionNote inv={inv} />
       {config.anyChain ? <AnyChainPay inv={inv} ensureSecret={ensureSecret} /> : <DemoPay inv={inv} ensureSecret={ensureSecret} refresh={refresh} />}
       <NearWalletPay inv={inv} ensureSecret={ensureSecret} refresh={refresh} />
@@ -255,7 +262,7 @@ function DemoPay({ inv, ensureSecret, refresh }: { inv: Invoice; ensureSecret: (
           try {
             const s = ensureSecret();
             await relay({ method: "demo_pay", invoice_id: inv.id, client_key: publicKeyOf(s) });
-            toast("Paid. The money is locked for the freelancer.");
+            toast(t("Paid. The money is locked for the freelancer."));
             refresh();
           } catch (e) {
             setError(errText(e));
@@ -264,7 +271,7 @@ function DemoPay({ inv, ensureSecret, refresh }: { inv: Invoice; ensureSecret: (
           }
         }}
       >
-        <Busy busy={busy}>Pay {formatUsd(inv.amount, { cents: true })} (test money)</Busy>
+        <Busy busy={busy}>{t("Pay {amount} (test money)", { amount: formatUsd(inv.amount, { cents: true }) })}</Busy>
       </button>
     </div>
   );
@@ -294,20 +301,21 @@ function AnyChainPreview({ amount }: { amount: string }) {
   return (
     <div className="preview">
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <b>On mainnet, pay with any crypto</b>
-        <span className="badge lock">Live prices</span>
+        <b>{t("On mainnet, pay with any crypto")}</b>
+        <span className="badge lock">{t("Live prices")}</span>
       </div>
       <div className="preview-grid">
         {PREVIEW_OPTIONS.map((o) => (
           <div key={o.assetId} className="preview-row">
-            <span className="muted small">{o.label} on {o.chain}</span>
+            <span className="muted small">{t("{coin} on {chain}", { coin: o.label, chain: o.chain })}</span>
             <b>{rows[o.assetId] ? `${rows[o.assetId]} ${o.label}` : <span className="spinner dark" />}</b>
           </div>
         ))}
       </div>
       <p className="hint" style={{ margin: 0 }}>
-        Real quotes from NEAR Intents, fees included{at ? `, updated ${at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : ""}.
-        Any-crypto payment runs on mainnet only, so this testnet demo pays with free test dollars below.
+        {t("Real quotes from NEAR Intents, fees included.")}
+        {at ? ` ${t("Updated {time}.", { time: at.toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" }) })}` : ""}{" "}
+        {t("Any-crypto payment runs on mainnet only, so this testnet demo pays with free test dollars below.")}
       </p>
     </div>
   );
@@ -342,23 +350,23 @@ function AnyChainPay({ inv, ensureSecret }: { inv: Invoice; ensureSecret: () => 
   };
 
   if (quote) {
-    const label = status === "SUCCESS" ? "✅ Received. Locking it for the freelancer…" :
+    const label = t(status === "SUCCESS" ? "✅ Received. Locking it for the freelancer…" :
       status === "PROCESSING" || status === "KNOWN_DEPOSIT_TX" ? "⏳ Payment seen, converting…" :
       status === "REFUNDED" || status === "FAILED" ? "↩️ Something went wrong; your payment is being refunded to your address." :
-      status === "INCOMPLETE_DEPOSIT" ? "⚠️ The amount sent was too small; it will be refunded." : "Waiting for your payment…";
+      status === "INCOMPLETE_DEPOSIT" ? "⚠️ The amount sent was too small; it will be refunded." : "Waiting for your payment…");
     return (
       <div className="stack">
         <div className="card gold" style={{ margin: 0 }}>
-          <p style={{ marginBottom: 4 }}>Send exactly</p>
+          <p style={{ marginBottom: 4 }}>{t("Send exactly")}</p>
           <div className="amount" style={{ fontSize: 30 }}>{quote.amountInFormatted} {choice.label}</div>
-          <p className="muted small">on <b>{choice.chain}</b>, to this address. It arrives in about {quote.timeEstimate ?? 60} seconds.</p>
+          <p className="muted small"><Rich text={t("on **{chain}**, to this address. It arrives in about {s} seconds.", { chain: choice.chain, s: quote.timeEstimate ?? 60 })} /></p>
         </div>
         <div className="center"><Qr text={quote.depositAddress} /></div>
-        <CopyField label={`${choice.label} deposit address (${choice.chain})`} value={quote.depositAddress} />
-        {quote.depositMemo && <CopyField label="Memo (required)" value={quote.depositMemo} />}
+        <CopyField label={t("{coin} deposit address ({chain})", { coin: choice.label, chain: choice.chain })} value={quote.depositAddress} />
+        {quote.depositMemo && <CopyField label={t("Memo (required)")} value={quote.depositMemo} />}
         <p className="center"><b>{label}</b></p>
-        <p className="hint center">This page updates by itself. Only send {choice.label} on {choice.chain}; anything else can be lost.</p>
-        <button className="btn ghost small" onClick={() => { setQuote(null); setStatus(null); }}>Choose another coin</button>
+        <p className="hint center">{t("This page updates by itself. Only send {coin} on {chain}; anything else can be lost.", { coin: choice.label, chain: choice.chain })}</p>
+        <button className="btn ghost small" onClick={() => { setQuote(null); setStatus(null); }}>{t("Choose another coin")}</button>
       </div>
     );
   }
@@ -366,7 +374,7 @@ function AnyChainPay({ inv, ensureSecret }: { inv: Invoice; ensureSecret: () => 
   return (
     <div className="stack">
       <div className="field">
-        <label>Pay with the crypto you already have</label>
+        <label>{t("Pay with the crypto you already have")}</label>
         <div className="chips">
           {PAY_OPTIONS.map((o, i) => (
             <button key={o.assetId} className={`chip ${i === opt ? "on" : ""}`} onClick={() => setOpt(i)}>
@@ -376,15 +384,15 @@ function AnyChainPay({ inv, ensureSecret }: { inv: Invoice; ensureSecret: () => 
         </div>
       </div>
       <div className="field">
-        <label htmlFor="refund">Your {choice.chain} address</label>
+        <label htmlFor="refund">{t("Your {chain} address", { chain: choice.chain })}</label>
         <input id="refund" placeholder={choice.addressHint} value={refundTo} onChange={(e) => setRefundTo(e.target.value)} />
-        <div className="hint">Only used to send your money back automatically if the conversion fails.</div>
+        <div className="hint">{t("Only used to send your money back automatically if the conversion fails.")}</div>
       </div>
       {error && <p className="err">{error}</p>}
       <button className="btn big block gold" disabled={busy || !looksLikeAddress(choice.chain, refundTo)} onClick={getQuote}>
-        <Busy busy={busy}>Get payment details</Busy>
+        <Busy busy={busy}>{t("Get payment details")}</Busy>
       </button>
-      <p className="hint center">The exact amount, including network fees, is shown before you send anything.</p>
+      <p className="hint center">{t("The exact amount, including network fees, is shown before you send anything.")}</p>
     </div>
   );
 }
@@ -395,7 +403,7 @@ function NearWalletPay({ inv, ensureSecret, refresh }: { inv: Invoice; ensureSec
   const [error, setError] = useState("");
   return (
     <details>
-      <summary>Have {config.symbol} on NEAR? Pay from your NEAR wallet</summary>
+      <summary>{t("Have {symbol} on NEAR? Pay from your NEAR wallet", { symbol: config.symbol })}</summary>
       <div className="stack" style={{ marginTop: 10 }}>
         {error && <p className="err">{error}</p>}
         {accountId ? (
@@ -412,7 +420,7 @@ function NearWalletPay({ inv, ensureSecret, refresh }: { inv: Invoice; ensureSec
                   { receiver_id: config.contract, amount: inv.amount, msg: paymentMsg(inv.id, s, accountId) },
                   { receiverId: config.token, deposit: ONE_YOCTO, gas: 150_000_000_000_000n },
                 );
-                toast("Paid. The money is locked for the freelancer.");
+                toast(t("Paid. The money is locked for the freelancer."));
                 refresh();
               } catch (e) {
                 setError(errText(e));
@@ -421,10 +429,10 @@ function NearWalletPay({ inv, ensureSecret, refresh }: { inv: Invoice; ensureSec
               }
             }}
           >
-            <Busy busy={busy}>Pay {formatUsd(inv.amount, { cents: true })} from {accountId}</Busy>
+            <Busy busy={busy}>{t("Pay {amount} from {account}", { amount: formatUsd(inv.amount, { cents: true }), account: accountId })}</Busy>
           </button>
         ) : (
-          <button className="btn ghost block" onClick={() => connect()}>Connect a NEAR wallet</button>
+          <button className="btn ghost block" onClick={() => connect()}>{t("Connect a NEAR wallet")}</button>
         )}
       </div>
     </details>
@@ -440,7 +448,7 @@ function reviewEnds(inv: Invoice) {
 function CalendarButtons({ event }: { event: CalendarEvent }) {
   return (
     <div className="row">
-      <button className="btn small ghost" onClick={() => downloadIcs(event)}>📅 Add to my calendar</button>
+      <button className="btn small ghost" onClick={() => downloadIcs(event)}>{t("📅 Add to my calendar")}</button>
       <a className="btn small ghost" href={googleCalendarUrl(event)} target="_blank" rel="noreferrer">Google Calendar</a>
     </div>
   );
@@ -463,12 +471,12 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
     setError("");
     try {
       await sendClientAction(inv.id, secret, action);
-      toast(done);
+      toast(t(done));
       refresh();
       setTimeout(refresh, 2500);
     } catch (e) {
       setError(errText(e));
-      toast(`Didn't go through: ${errText(e)}`);
+      toast(`${t("Didn't go through:")} ${errText(e)}`);
     } finally {
       setBusy("");
     }
@@ -476,22 +484,23 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
 
   return (
     <>
-      {error && <div className="card red small"><b>Didn't go through:</b> {error}</div>}
+      {error && <div className="card red small"><b>{t("Didn't go through:")}</b> {error}</div>}
       {!FINAL.includes(inv.status) && <SaveControlLink inv={inv} secret={secret} />}
       {inv.status === "Funded" && (
         <div className="card stack">
-          <h3>Thanks, you've paid 🔒</h3>
+          <h3>{t("Thanks, you've paid 🔒")}</h3>
           <p className="muted">
-            {formatUsd(held, { cents: true })} is held safely. {displayName(inv.freelancer)} has been told the money is there and is working on it.
-            Work is due {shortDate(nsToDate(inv.due_at))}.
+            {t("{amount} is held safely. {name} has been told the money is there and is working on it. Work is due {date}.", {
+              amount: formatUsd(held, { cents: true }), name: displayName(inv.freelancer), date: shortDate(nsToDate(inv.due_at)),
+            })}
           </p>
           <CalendarButtons event={{ title: `Work due: ${inv.title}`, details: `PayPact invoice #${inv.id}`, start: nsToDate(inv.due_at), url }} />
           <button className="btn ghost" disabled={!!busy} onClick={() => act("approve", { type: "approve" }, "Approved and paid. Thank you!")}>
-            <Busy busy={busy === "approve"}>Already happy with the work? Approve now</Busy>
+            <Busy busy={busy === "approve"}>{t("Already happy with the work? Approve now")}</Busy>
           </button>
           {Date.now() > nsToDate(inv.due_at).getTime() + 2 * DAY_MS && (
             <button className="btn danger" disabled={!!busy} onClick={() => act("refund", { type: "refund_undelivered" }, "Refund on its way")}>
-              Nothing delivered: refund me
+              {t("Nothing delivered: refund me")}
             </button>
           )}
         </div>
@@ -499,22 +508,22 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
 
       {inv.status === "Delivered" && (
         <div className="card stack">
-          <h3>📦 The work has been delivered</h3>
+          <h3>{t("📦 The work has been delivered")}</h3>
           <p className="muted">
-            Please review it. If you're happy, approve and {displayName(inv.freelancer)} is paid in seconds.
-            {ends && <> If there's no response by <b>{shortDate(ends)}</b>, payment is released automatically.</>}
+            {t("Please review it. If you're happy, approve and {name} is paid in seconds.", { name: displayName(inv.freelancer) })}
+            {ends && <> <Rich text={t("If there's no response by **{date}**, payment is released automatically.", { date: shortDate(ends) })} /></>}
           </p>
           {ends && <CalendarButtons event={{ title: `Review & approve: ${inv.title}`, details: `Approve or report a problem before the automatic release. PayPact invoice #${inv.id}`, start: ends, url }} />}
           <button className="btn big block" disabled={!!busy} onClick={() => act("approve", { type: "approve" }, "Approved and paid. Thank you!")}>
-            {busy === "approve" ? <><span className="spinner" /> Releasing payment… a few seconds</> : <>Approve & release {formatUsd(held, { cents: true })}</>}
+            {busy === "approve" ? <><span className="spinner" /> {t("Releasing payment… a few seconds")}</> : <>{t("Approve & release {amount}", { amount: formatUsd(held, { cents: true }) })}</>}
           </button>
           <details>
-            <summary>Something's wrong? Report a problem</summary>
+            <summary>{t("Something's wrong? Report a problem")}</summary>
             <div className="stack" style={{ marginTop: 10 }}>
-              <textarea placeholder="What's missing or wrong?" maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
-              <p className="hint">The money stays frozen while you and the freelancer sort it out. You can agree a split, or a referee decides.</p>
+              <textarea placeholder={t("What's missing or wrong?")} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
+              <p className="hint">{t("The money stays frozen while you and the freelancer sort it out. You can agree a split, or a referee decides.")}</p>
               <button className="btn danger" disabled={!!busy || !reason.trim()} onClick={() => act("dispute", { type: "dispute", reason: reason.trim() }, "Problem reported. The money is frozen.")}>
-                <Busy busy={busy === "dispute"}>Freeze payment & report</Busy>
+                <Busy busy={busy === "dispute"}>{t("Freeze payment & report")}</Busy>
               </button>
             </div>
           </details>
@@ -523,54 +532,57 @@ function ClientPanel({ inv, secret, refresh }: { inv: Invoice; secret: string; r
 
       {inv.status === "Disputed" && (
         <div className="card red stack">
-          <h3>⚠️ Payment frozen</h3>
-          <p className="small">You reported: "{inv.dispute_reason}"</p>
+          <h3>{t("⚠️ Payment frozen")}</h3>
+          <p className="small">{t("You reported: \"{reason}\"", { reason: inv.dispute_reason ?? "" })}</p>
           {inv.proposal?.by === "Freelancer" && (
             <div className="card" style={{ margin: 0 }}>
-              <p>{displayName(inv.freelancer)} offers: <b>{formatUsd(inv.proposal.to_freelancer, { cents: true })}</b> to them, <b>{formatUsd(held - BigInt(inv.proposal.to_freelancer), { cents: true })}</b> back to you.</p>
+              <p><Rich text={t("{name} offers: **{a}** to them, **{b}** back to you.", {
+                name: displayName(inv.freelancer), a: formatUsd(inv.proposal.to_freelancer, { cents: true }),
+                b: formatUsd(held - BigInt(inv.proposal.to_freelancer), { cents: true }),
+              })} /></p>
               <button className="btn" disabled={!!busy} onClick={() => act("accept", { type: "accept_split" }, "Settled. Thanks for working it out.")}>
-                <Busy busy={busy === "accept"}>Accept this split</Busy>
+                <Busy busy={busy === "accept"}>{t("Accept this split")}</Busy>
               </button>
             </div>
           )}
-          <label>Offer a split: {splitPct}% to the freelancer ({formatUsd((held * BigInt(splitPct)) / 100n, { cents: true })})</label>
+          <label>{t("Offer a split: {pct}% to the freelancer ({amount})", { pct: splitPct, amount: formatUsd((held * BigInt(splitPct)) / 100n, { cents: true }) })}</label>
           <input type="range" min={0} max={100} step={5} value={splitPct} onChange={(e) => setSplitPct(Number(e.target.value))} />
           <button className="btn ghost" disabled={!!busy} onClick={() => act("propose", { type: "propose_split", to_freelancer: ((held * BigInt(splitPct)) / 100n).toString() }, "Offer sent")}>
-            <Busy busy={busy === "propose"}>Send this offer</Busy>
+            <Busy busy={busy === "propose"}>{t("Send this offer")}</Busy>
           </button>
           <p className="hint">
-            {inv.arbiter ? `If you can't agree, the referee (${inv.arbiter}) decides.` : `If nothing is agreed within ${inv.dispute_timeout_days} days, it's split 50/50.`}
+            {inv.arbiter ? t("If you can't agree, the referee ({arbiter}) decides.", { arbiter: inv.arbiter }) : t("If nothing is agreed within {days} days, it's split 50/50.", { days: inv.dispute_timeout_days })}
           </p>
         </div>
       )}
 
       {(inv.status === "Released" || inv.status === "Split") && !inv.rating && (
         <div className="card stack">
-          <h3>How was working with {displayName(inv.freelancer)}?</h3>
+          <h3>{t("How was working with {name}?", { name: displayName(inv.freelancer) })}</h3>
           <div className="starpick">
             {[1, 2, 3, 4, 5].map((n) => (
               <button key={n} className={n <= stars ? "on" : ""} onClick={() => setStars(n)} aria-label={`${n} stars`}>★</button>
             ))}
           </div>
-          <textarea placeholder="A few words for future clients (optional)" maxLength={280} value={comment} onChange={(e) => setComment(e.target.value)} />
+          <textarea placeholder={t("A few words for future clients (optional)")} maxLength={280} value={comment} onChange={(e) => setComment(e.target.value)} />
           <button className="btn" disabled={!!busy} onClick={() => act("rate", { type: "rate", stars, comment: comment.trim() || null }, "Thanks! Your rating is on their profile.")}>
-            <Busy busy={busy === "rate"}>Post rating</Busy>
+            <Busy busy={busy === "rate"}>{t("Post rating")}</Busy>
           </button>
-          <p className="hint">Only clients who actually paid can rate, once. Ratings can't be edited or deleted by anyone.</p>
+          <p className="hint">{t("Only clients who actually paid can rate, once. Ratings can't be edited or deleted by anyone.")}</p>
         </div>
       )}
       {(inv.status === "Released" || inv.status === "Split") && inv.rating && (
-        <div className="card green center">Thanks for paying with PayPact. You rated {displayName(inv.freelancer)} <Stars value={inv.rating.stars} />.</div>
+        <div className="card green center">{t("Thanks for paying with PayPact. You rated {name}", { name: displayName(inv.freelancer) })} <Stars value={inv.rating.stars} /></div>
       )}
 
       {!FINAL.includes(inv.status) && !inv.client_refund_to && (
         <details className="card soft">
-          <summary>Add a NEAR account for refunds (recommended)</summary>
+          <summary>{t("Add a NEAR account for refunds (recommended)")}</summary>
           <div className="row" style={{ marginTop: 10 }}>
             <input className="grow" placeholder="you.near" value={refundAcct} onChange={(e) => setRefundAcct(e.target.value.toLowerCase())} />
-            <button className="btn small" disabled={!!busy || !refundAcct.trim()} onClick={() => act("refundacct", { type: "set_refund_account", account: refundAcct.trim() }, "Saved")}>Save</button>
+            <button className="btn small" disabled={!!busy || !refundAcct.trim()} onClick={() => act("refundacct", { type: "set_refund_account", account: refundAcct.trim() }, "Saved")}>{t("Save")}</button>
           </div>
-          <p className="hint">If any money comes back to you, it goes here.</p>
+          <p className="hint">{t("If any money comes back to you, it goes here.")}</p>
         </details>
       )}
 
@@ -602,31 +614,30 @@ function SaveControlLink({ inv, secret }: { inv: Invoice; secret: string }) {
       /* fine: we'll just ask again next time */
     }
   };
-  const msg = `My PayPact control link for "${inv.title}" (${formatUsd(inv.amount, { cents: true })}). It lets me approve the work or report a problem from any device. Don't share it.\n\n${link}`;
-  const subject = `PayPact: control link for invoice #${inv.id}`;
+  const msg = `${t("My PayPact control link for \"{title}\" ({amount}). It lets me approve the work or report a problem from any device. Don't share it.", { title: inv.title, amount: formatUsd(inv.amount, { cents: true }) })}\n\n${link}`;
+  const subject = t("PayPact: control link for invoice #{id}", { id: inv.id });
 
   if (saved && !open) {
     return (
       <div className="card soft row small" style={{ justifyContent: "space-between" }}>
-        <span>✅ Control link saved</span>
-        <button className="btn small ghost" onClick={() => setOpen(true)}>Show it again</button>
+        <span>{t("✅ Control link saved")}</span>
+        <button className="btn small ghost" onClick={() => setOpen(true)}>{t("Show it again")}</button>
       </div>
     );
   }
   return (
     <div className="card stack keycard">
-      <h3>🔑 Save your control link, it takes 5 seconds</h3>
+      <h3>{t("🔑 Save your control link, it takes 5 seconds")}</h3>
       <p className="small" style={{ margin: 0 }}>
-        Your power to <b>approve the work or get your money back</b> is stored only in this browser. If you clear it or change phones,
-        you'd lose that protection. Send this link <b>to yourself</b> so you can act from any device.
+        <Rich text={t("Your power to **approve the work or get your money back** is stored only in this browser. If you clear it or change phones, you'd lose that protection. Send this link **to yourself** so you can act from any device.")} />
       </p>
       <div className="row">
-        <a className="btn small" href={`https://wa.me/?text=${encodeURIComponent(msg)}`} target="_blank" rel="noreferrer" onClick={markSaved}>WhatsApp (to myself)</a>
-        <a className="btn small ghost" href={`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(subject)}`} target="_blank" rel="noreferrer" onClick={markSaved}>Telegram (Saved Messages)</a>
-        <a className="btn small ghost" href={`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(msg)}`} onClick={markSaved}>Email it to me</a>
+        <a className="btn small" href={`https://wa.me/?text=${encodeURIComponent(msg)}`} target="_blank" rel="noreferrer" onClick={markSaved}>{t("WhatsApp (to myself)")}</a>
+        <a className="btn small ghost" href={`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(subject)}`} target="_blank" rel="noreferrer" onClick={markSaved}>{t("Telegram (Saved Messages)")}</a>
+        <a className="btn small ghost" href={`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(msg)}`} onClick={markSaved}>{t("Email it to me")}</a>
       </div>
-      <div onClick={(e) => (e.target as HTMLElement).tagName === "BUTTON" && markSaved()}><CopyField label="Or copy it" value={link} /></div>
-      <p className="hint" style={{ margin: 0 }}>Keep it private: anyone with this link can approve or dispute for you. The freelancer never sees it.</p>
+      <div onClick={(e) => (e.target as HTMLElement).tagName === "BUTTON" && markSaved()}><CopyField label={t("Or copy it")} value={link} /></div>
+      <p className="hint" style={{ margin: 0 }}>{t("Keep it private: anyone with this link can approve or dispute for you. The freelancer never sees it.")}</p>
     </div>
   );
 }
