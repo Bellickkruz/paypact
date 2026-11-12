@@ -71,7 +71,7 @@ All steps run on NEAR testnet with free test dollars (`tUSDC`). Timings are from
 - **Gasless variants:** `create_invoice_for` and `mark_delivered_for`, callable only by the relayer.
 - **Timeouts:** anyone can call `release_after_review` once the review window has passed, and `resolve_stale_dispute` (50/50) once the dispute timeout has passed. `arbiter_resolve` is for the named referee.
 - **Failed payouts** are kept as `owed_*` and can be retried with `retry_payout`.
-- **Profiles** (`get_profile`) count jobs, earnings, on-time deliveries and disputes, and are only updated by real invoices.
+- **Profiles** (`get_profile`) count deliveries (each milestone counts as one), earnings, on-time deliveries and disputes, and are only updated by real invoices.
 
 **Who can do what**
 
