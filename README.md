@@ -5,7 +5,7 @@ Escrowed invoice links on NEAR. A freelancer sends a link; the client pays with 
 - **Live demo (NEAR testnet):** https://paypact-alpha.vercel.app
 - **Contract:** [`pact2.paypact-dev-mwaweex6.testnet`](https://testnet.nearblocks.io/address/pact2.paypact-dev-mwaweex6.testnet) (Rust, near-sdk 5)
 - **Tracks:** `realworld` (invoicing and stablecoin rails), `security` (AI assistant on a function-call key that cannot move money)
-- **Other project by the same author:** [Market Radar](https://github.com/Bellickkruz/market-radar), an independent prediction-market tool (see [Disclosure](#disclosure))
+- **Other project by the same author:** [Market Radar](https://github.com/Bellickkruz/market-radar) ([live](https://market-radar-taupe.vercel.app)), an independent prediction-market finder with its own NEAR contract (see [Disclosure](#disclosure))
 
 ## The problem
 
@@ -163,7 +163,7 @@ web/public/          favicon, sample delivery page used by the demo
 ## Disclosure
 
 - **Built during the hackathon.** All code in this repository was written from 2026-11-10, in the commits listed in `git log`. No pre-hackathon code is reused.
-- **Second project.** The author also submits **Market Radar** (https://github.com/Bellickkruz/market-radar), a prediction-market aggregator. The two projects share no code or contracts.
+- **Second project.** The author also submits **Market Radar** (https://github.com/Bellickkruz/market-radar, live at https://market-radar-taupe.vercel.app). It finds the best odds across prediction markets, funds them through NEAR Intents, and runs its own Radar Pools contract on NEAR testnet. The two projects are independent, with separate contracts, accounts and deployments.
 - **AI assistance.** The code was written with Claude Code (Anthropic) as a pair programmer, under the author's direction. The author reviewed and tested every change on testnet.
 - **Third-party libraries:**
   - Contract: `near-sdk` 5.30; tests use `ed25519-dalek` and `rand`.
