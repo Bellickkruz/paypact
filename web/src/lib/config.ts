@@ -39,8 +39,9 @@ export const config = {
    * (1Click "appFees") on top of the swap. The freelancer still receives the exact
    * invoice amount; the client sees the total, fee included, before paying.
    */
-  appFee: import.meta.env.VITE_APP_FEE_RECIPIENT
-    ? [{ recipient: String(import.meta.env.VITE_APP_FEE_RECIPIENT), fee: Number(import.meta.env.VITE_APP_FEE_BPS ?? 50) }]
+  // On by default on mainnet, paid to PayPact's account; testnet has no real swaps to charge.
+  appFee: network === "mainnet" || import.meta.env.VITE_APP_FEE_RECIPIENT
+    ? [{ recipient: String(import.meta.env.VITE_APP_FEE_RECIPIENT || "bellickkruz.near"), fee: Number(import.meta.env.VITE_APP_FEE_BPS ?? 50) }]
     : undefined,
 };
 

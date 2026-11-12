@@ -157,7 +157,7 @@ web/public/          favicon, sample delivery page used by the demo
 
 ## Roadmap
 
-- Deploy on mainnet with a revenue fee on any-crypto payments, collected by NEAR Intents `appFees`. This is already wired behind `VITE_APP_FEE_RECIPIENT`; the freelancer still receives the exact invoice amount.
+- Deploy on mainnet with a revenue fee on any-crypto payments: a 0.5% NEAR Intents app fee (`appFees`), on by default on mainnet and paid to `bellickkruz.near`. 1Click splits app fees 50/50 and drops its own 0.2% base fee, so PayPact receives 0.25% and the client pays about 0.3% more. The freelancer still receives the exact invoice amount.
 - An AI job checklist written from the freelancer's chat with the client and agreed before payment, and an AI-suggested fair split in disputes. The AI suggests; both parties accept with their own keys.
 - PayPact for Teams: budgets that an AI agent spends within on-chain limits.
 
