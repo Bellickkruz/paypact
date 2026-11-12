@@ -30,7 +30,8 @@ All steps run on NEAR testnet with free test dollars (`tUSDC`). Timings are from
 
 | # | Do | See |
 |---|----|-----|
-| 1 | Open https://paypact-alpha.vercel.app and tap **"▶ Try it now, no wallet needed"**. | An invoice from "Demo Designer" (a freelancer account PayPact plays for the demo), with an orange guide box: *Demo · step 1 of 4*. If the invoice has an up-front share, a box under the total shows what goes to the freelancer immediately and what is held. |
+| 0 | Open https://paypact-alpha.vercel.app. | The home page is the product. Example sentences type themselves into the composer, and a **3D invoice builds live beside them** (client, job, amount, due date, up-front split), stamped *Locked in escrow · NEAR* once there's an amount. Below it, **Live on NEAR testnet** reads the contract directly: money locked now, paid out, invoices created, and recent payments. Under that, a **What happens if…** table lists every outcome and what enforces it. |
+| 1 | Tap **"▶ Try it as a client"** (under the composer). | An invoice from "Demo Designer" (a freelancer account PayPact plays for the demo), with an orange guide box: *Demo · step 1 of 4*. If the invoice has an up-front share, a box under the total shows what goes to the freelancer immediately and what is held. |
 | 2 | Look at the **"On mainnet, pay with any crypto"** box. | Live NEAR Intents quotes for this invoice in USDC (Base, Solana), USDT (Tron), ETH, SOL and BTC, fees included, refreshed every 30 s. These are real `dry` quotes from the 1Click API; payment itself needs mainnet (see [Testnet and mainnet](#testnet-and-mainnet)). |
 | 3 | Tap **"Pay $… (test money)"**. | About 5 s later: status *🔒 Paid & locked*, and an orange **"🔑 Save your control link"** box. |
 | 4 | Tap **"Demo Designer delivers the work"**. | A **📦 Proof of delivery** box with the delivery time, an *On time* badge, the freelancer's note and a **View the delivered work ↗** link. |
@@ -38,7 +39,7 @@ All steps run on NEAR testnet with free test dollars (`tUSDC`). Timings are from
 | 6 | Pick stars, write a comment, tap **"Post rating"**. | *Step 4 of 4* is complete. Tap **"See Demo Designer's profile"**: the rating is listed with a *✓ Paid $… job* badge. |
 | 7 | Back on the invoice, tap **"🧾 Receipt (PDF)"**, then **"Download PDF / Print"**. | A receipt with the amounts, dates, proof of delivery and contract address. |
 | 8 | On any invoice, change the **🌐** menu to *Français*, *Español*, *Português*, *Deutsch* or *中文*. | The client side of the page (terms, amounts, buttons, dates) switches language. It opens in the browser's language by default. |
-| 9 | Back on the home page, tap **"▶ Try a project: 4 posts, paid in batches"**. | A $1,000 project with 4 milestones ("Post 1 of 4" … "Post 4 of 4", $250 each, due weekly), shown as a timeline. Pay once ($1,000). Then, for each post, tap **"Demo Designer delivers Post N of 4"** and **"Approve & release $250.00"**. **See:** a progress bar going from *$250 paid out · $750 locked* to *$1,000 paid out · $0 locked*, each milestone turning *✅ Paid out* with its proof. The project takes about 60 s. |
+| 9 | Back on the home page, tap **"▶ Try a 4-post project paid in batches"**. | A $1,000 project with 4 milestones ("Post 1 of 4" … "Post 4 of 4", $250 each, due weekly), shown as a timeline. Pay once ($1,000). Then, for each post, tap **"Demo Designer delivers Post N of 4"** and **"Approve & release $250.00"**. **See:** a progress bar going from *$250 paid out · $750 locked* to *$1,000 paid out · $0 locked*, each milestone turning *✅ Paid out* with its proof. The project takes about 60 s. |
 | 10 | Run `node scripts/check-invoice.mjs <number>` with the invoice number (Node 18+, no install). | The same invoice read straight from the contract: status, amounts, timestamps, proof link, rating, the client's public key and the freelancer's profile. |
 
 ### As a freelancer (needs a NEAR testnet wallet)
@@ -103,7 +104,7 @@ All steps run on NEAR testnet with free test dollars (`tUSDC`). Timings are from
 | Contract, escrow, disputes, ratings, profiles, gasless freelancer, AI key, proof of delivery, receipts, languages | live and tested | same code; not deployed yet |
 | Client payment | free test token (`tUSDC`, mints on demand) through the relay's `demo_pay` | any coin on any supported chain through NEAR Intents 1Click into native USDC; code path in `AnyChainPay` |
 | Any-crypto prices | live NEAR Intents `dry` quotes shown on every unpaid invoice | the same quotes, plus a real deposit address |
-| "Try it now" demo freelancer | on (`demo-designer.paypact-dev-mwaweex6.testnet`) | off |
+| "Try it as a client" demo freelancer | on (`demo-designer.paypact-dev-mwaweex6.testnet`) | off |
 
 NEAR Intents has no testnet (hackathon FAQ Q-007), so the full any-crypto payment was not run end to end for this submission. The 1Click quote, deposit-address and status calls were exercised against mainnet. Delivery into the contract depends on `customRecipientMsg`, which 1Click documents as experimental.
 
