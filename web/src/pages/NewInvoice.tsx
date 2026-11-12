@@ -30,7 +30,7 @@ const DAY_MS = 86_400_000;
 const inDays = (d: string) => Math.max(1, Math.ceil((new Date(`${d}T23:59:00`).getTime() - Date.now()) / DAY_MS));
 const dateIn = (days: number) => new Date(Date.now() + days * DAY_MS).toISOString().slice(0, 10);
 
-/** Prefill from "#/new?title=…&amount=…" (used by "Send the next stage"). */
+/** Prefill from "#/new?title=…&amount=…" (the home page sentence, or "Send the next stage"). */
 function prefill() {
   const q = new URLSearchParams(location.hash.split("?")[1] ?? "");
   const num = (k: string, d: number) => (q.has(k) && isFinite(Number(q.get(k))) ? Number(q.get(k)) : d);
@@ -40,7 +40,9 @@ function prefill() {
     upfront: UPFRONT.includes(num("upfront", 0)) ? num("upfront", 0) : 0,
     review: num("review", 5),
     arbiter: q.get("arbiter") ?? "",
-    isNextStage: q.has("title"),
+    client: q.get("client") ?? "",
+    dueDays: Math.min(365, Math.max(1, num("due", 7))),
+    isNextStage: q.get("stage") === "next",
   };
 }
 
@@ -48,10 +50,10 @@ export function NewInvoice() {
   const { accountId, connect } = useWallet();
   const [pre] = useState(prefill);
   const [sentence, setSentence] = useState("");
-  const [client, setClient] = useState("");
+  const [client, setClient] = useState(pre.client);
   const [amount, setAmount] = useState(pre.amount);
   const [title, setTitle] = useState(pre.title);
-  const [due, setDue] = useState(dateIn(7));
+  const [due, setDue] = useState(dateIn(pre.dueDays));
   const [upfront, setUpfront] = useState(pre.upfront);
   const [review, setReview] = useState(pre.review);
   const [arbiter, setArbiter] = useState(pre.arbiter);

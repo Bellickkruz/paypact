@@ -36,10 +36,17 @@ export function App() {
     <>
       <Header />
       {page}
-      <footer>
-        PayPact runs on a NEAR smart contract:{" "}
-        <a href={accountUrl(config.contract)} target="_blank" rel="noreferrer">{config.contract}</a>.
-        Nobody, not even PayPact, can take the money in it.
+      <footer className="site-footer">
+        <div className="foot-brand"><img src="/favicon.svg" alt="" /> <b>Pay<span>Pact</span></b> <span className="muted">· escrow invoices on NEAR</span></div>
+        <nav>
+          <a href="https://github.com/Bellickkruz/paypact" target="_blank" rel="noreferrer">GitHub</a>
+          <a href={accountUrl(config.contract)} target="_blank" rel="noreferrer">Contract</a>
+          <a href="#/new">Create an invoice</a>
+          <a href="#/me">My invoices</a>
+        </nav>
+        <p className="muted">
+          PayPact runs on a NEAR smart contract (<span className="mono">{config.contract}</span>). Nobody, not even PayPact, can take the money in it.
+        </p>
       </footer>
     </>
   );

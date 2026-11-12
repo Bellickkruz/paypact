@@ -865,6 +865,7 @@ function nextStageUrl(inv: Invoice) {
   const base = m ? m[1] : inv.title;
   const stage = m ? Number(m[2]) + 1 : 2;
   const q = new URLSearchParams({
+    stage: "next",
     title: `${base} (stage ${stage})`,
     amount: (Number(BigInt(inv.amount) / 10_000n) / 100).toString(),
     upfront: String(Number((BigInt(inv.upfront) * 100n) / BigInt(inv.amount))),
