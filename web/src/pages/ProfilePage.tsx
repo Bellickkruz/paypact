@@ -54,10 +54,10 @@ export function ProfilePage({ account }: { account: string }) {
               <div>
                 <div className="row" style={{ justifyContent: "space-between" }}>
                   <Stars value={i.rating!.stars} />
-                  <span className="badge ok">✓ Paid {formatUsd(i.amount)} job</span>
+                  <span className="badge ok">✓ Paid {formatUsd(i.project ? i.project.total : i.amount)} {i.project ? `project (${i.project.count} milestones)` : "job"}</span>
                 </div>
                 {i.rating!.comment && <div>"{i.rating!.comment}"</div>}
-                <div className="muted small">{i.title} · {shortDate(nsToDate(i.rating!.at))} · <a href={`#/i/${i.id}`}>invoice #{i.id}</a></div>
+                <div className="muted small">{i.project ? i.project.title : i.title} · {shortDate(nsToDate(i.rating!.at))} · <a href={`#/i/${i.project ? i.project.id : i.id}`}>{i.project ? "project" : "invoice"} #{i.project ? i.project.id : i.id}</a></div>
               </div>
             </div>
           ))}
