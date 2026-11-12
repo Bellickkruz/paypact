@@ -30,7 +30,7 @@ export function ProfilePage({ account }: { account: string }) {
         {displayName(account) !== account && <p className="muted small" style={{ marginTop: -6 }}>{account}</p>}
         <Stars value={avg / 100} count={p.rating_count} />
         <div className="stats" style={{ marginTop: 16 }}>
-          <div className="stat"><b>{p.completed + p.split}</b><span className="muted small">jobs paid out</span></div>
+          <div className="stat"><b>{p.completed + p.split}</b><span className="muted small">deliveries paid out</span></div>
           <div className="stat"><b>{formatUsd(p.total_earned)}</b><span className="muted small">earned</span></div>
           <div className="stat"><b>{onTime === null ? "—" : `${onTime}%`}</b><span className="muted small">delivered on time</span></div>
           <div className="stat"><b>{p.disputed}</b><span className="muted small">{p.disputed === 1 ? "dispute" : "disputes"}</span></div>
@@ -66,7 +66,7 @@ export function ProfilePage({ account }: { account: string }) {
 
       <div className="card soft">
         <h3>Share this profile</h3>
-        <ShareButtons text={`My verified track record on PayPact: ${p.completed + p.split} jobs paid${p.rating_count ? `, ${(avg / 100).toFixed(1)}★` : ""}.`} url={url} />
+        <ShareButtons text={`My verified track record on PayPact: ${p.completed + p.split} deliveries paid${p.rating_count ? `, ${(avg / 100).toFixed(1)}★` : ""}.`} url={url} />
       </div>
     </main>
   );

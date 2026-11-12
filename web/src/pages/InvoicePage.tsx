@@ -142,7 +142,7 @@ function ProjectView({ ms, profile, isFreelancer, isClient, secret, setSecret, r
         {pr && (
           <a href={`#/p/${first.freelancer}`} className="small" style={{ textDecoration: "none" }}>
             <Stars value={avg / 100} count={pr.rating_count} />{" "}
-            <span className="muted">· {pr.completed === 1 ? t("1 job completed") : t("{n} jobs completed", { n: pr.completed })}
+            <span className="muted">· {pr.completed === 1 ? t("1 delivery completed") : t("{n} deliveries completed", { n: pr.completed })}
               {pr.delivered > 0 && ` · ${t("{pct}% on time", { pct: Math.round((pr.delivered_on_time / pr.delivered) * 100) })}`}</span>
           </a>
         )}
@@ -278,7 +278,7 @@ function InvoiceSummary({ inv, profile }: { inv: Invoice; profile: [Profile, num
       {p && (
         <a href={`#/p/${inv.freelancer}`} className="small" style={{ textDecoration: "none" }}>
           <Stars value={avg / 100} count={p.rating_count} />{" "}
-          <span className="muted">· {p.completed === 1 ? t("1 job completed") : t("{n} jobs completed", { n: p.completed })}
+          <span className="muted">· {p.completed === 1 ? t("1 delivery completed") : t("{n} deliveries completed", { n: p.completed })}
             {p.delivered > 0 && ` · ${t("{pct}% on time", { pct: Math.round((p.delivered_on_time / p.delivered) * 100) })}`}</span>
         </a>
       )}
